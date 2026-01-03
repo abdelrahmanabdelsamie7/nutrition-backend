@@ -1,0 +1,369 @@
+<?php
+
+namespace App\Services\Nutrition;
+
+use App\Interfaces\Services\NutritionServiceInterface;
+use App\Interfaces\Repositories\FoodLogRepositoryInterface;
+use App\Interfaces\Repositories\NutritionCacheRepositoryInterface;
+use App\Services\External\CalorieNinjasService;
+use App\DTOs\NutritionDataDTO;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
+use App\Services\Voice\VoiceService;
+
+class NutritionService implements NutritionServiceInterface
+{
+    public function __construct(
+        private FoodLogRepositoryInterface $foodLogRepository,
+        private NutritionCacheRepositoryInterface $cacheRepository,
+        private CalorieNinjasService $calorieService,
+        private VoiceService $voiceService
+    ) {}
+
+    /**
+     * Process text input and get nutrition data
+     */
+    public function processTextInput(string $text, int $userId): NutritionDataDTO
+    {
+        Log::info('Processing text input', ['user_id' => $userId, 'text' => $text]);
+
+        // Parse food items from text
+        $parsedItems = $this->parseFoodItems($text);
+
+        // Get nutrition data
+        $nutritionData = $this->getNutritionFromExternalAPI($text);
+
+        // Create DTO
+        $dto = new NutritionDataDTO(
+            userId: $userId,
+            rawInput: $text,
+            parsedItems: $parsedItems,
+            calories: $nutritionData['calories'],
+            protein: $nutritionData['protein'],
+            carbs: $nutritionData['carbs'],
+            fat: $nutritionData['fat'],
+            source: 'manual',
+            apiResponse: $nutritionData,
+            apiSource: 'calorieninjas',
+            isCached: $nutritionData['is_cached'] ?? false,
+            loggedAt: now()->toDateTimeString()
+        );
+
+        // Store in repository
+        $this->foodLogRepository->create($dto->toArray());
+
+        Log::info('Text input processed successfully', [
+            'user_id' => $userId,
+            'calories' => $dto->calories,
+            'protein' => $dto->protein,
+        ]);
+
+        return $dto;
+    }
+
+    /**
+     * Process voice input and get nutrition data
+     */
+    public function processVoiceInput(UploadedFile $audioFile, int $userId): NutritionDataDTO
+    {
+        Log::info('Processing voice input', ['user_id' => $userId, 'size' => $audioFile->getSize()]);
+
+        // Transcribe audio to text
+        $transcript = $this->voiceService->transcribeAudio($audioFile);
+
+        // Clean transcript
+        $cleanTranscript = $this->voiceService->cleanTranscript($transcript);
+
+        // Extract food items
+        $foodItems = $this->voiceService->extractFoodItemsFromVoice($cleanTranscript);
+
+        // Process as text input
+        $dto = $this->processTextInput($cleanTranscript, $userId);
+
+        // Update source to voice
+        $dto->source = 'voice';
+
+        Log::info('Voice input processed successfully', [
+            'user_id' => $userId,
+            'transcript' => $cleanTranscript,
+            'calories' => $dto->calories,
+        ]);
+
+        return $dto;
+    }
+
+    /**
+     * Get nutrition data from external API
+     */
+    public function getNutritionFromExternalAPI(string $foodQuery): array
+    {
+        return $this->calorieService->getNutritionData($foodQuery);
+    }
+
+    /**
+     * Parse food items from text
+     */
+    public function parseFoodItems(string $text): array
+    {
+        $items = [];
+
+        // Split by common separators
+        $segments = preg_split('/\s*(?:,|and|with|\+)\s*/i', $text);
+
+        foreach ($segments as $segment) {
+            $segment = trim($segment);
+            if (!empty($segment)) {
+                $items[] = $this->calorieService->parseFoodItem($segment);
+            }
+        }
+
+        return $items;
+    }
+
+    /**
+     * Calculate nutrition totals
+     */
+    public function calculateTotals(array $foodItems): array
+    {
+        $totals = [
+            'calories' => 0,
+            'protein' => 0,
+            'carbs' => 0,
+            'fat' => 0,
+            'items' => [],
+        ];
+
+        foreach ($foodItems as $item) {
+            $nutrition = $this->calorieService->getNutritionData($item['item']);
+
+            // Adjust for quantity
+            $quantity = $item['quantity'] ?? 1;
+            $nutrition['calories'] *= $quantity;
+            $nutrition['protein'] *= $quantity;
+            $nutrition['carbs'] *= $quantity;
+            $nutrition['fat'] *= $quantity;
+
+            // Add to totals
+            $totals['calories'] += $nutrition['calories'];
+            $totals['protein'] += $nutrition['protein'];
+            $totals['carbs'] += $nutrition['carbs'];
+            $totals['fat'] += $nutrition['fat'];
+
+            $totals['items'][] = [
+                'item' => $item,
+                'nutrition' => $nutrition,
+            ];
+        }
+
+        return $totals;
+    }
+
+    /**
+     * Get daily nutrition summary
+     */
+    public function getDailySummary(int $userId, string $date): array
+    {
+        $summary = $this->foodLogRepository->getDailySummary(
+            $userId,
+            \Carbon\Carbon::parse($date)
+        );
+
+        // Get user targets for comparison
+        $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
+        $user = $userRepository->find($userId);
+
+        $targets = [
+            'calories' => $user->daily_calorie_target ?? 2000,
+            'protein' => $user->daily_protein_target ?? 150,
+            'carbs' => $user->daily_carbs_target ?? 250,
+            'fat' => $user->daily_fat_target ?? 67,
+        ];
+
+        // Calculate percentages
+        $percentages = [];
+        foreach ($targets as $key => $target) {
+            $consumed = $summary['total_' . $key] ?? 0;
+            $percentages[$key] = $target > 0 ? ($consumed / $target) * 100 : 0;
+        }
+
+        return [
+            'date' => $date,
+            'consumed' => $summary,
+            'targets' => $targets,
+            'percentages' => $percentages,
+            'remaining' => [
+                'calories' => max(0, $targets['calories'] - ($summary['total_calories'] ?? 0)),
+                'protein' => max(0, $targets['protein'] - ($summary['total_protein'] ?? 0)),
+                'carbs' => max(0, $targets['carbs'] - ($summary['total_carbs'] ?? 0)),
+                'fat' => max(0, $targets['fat'] - ($summary['total_fat'] ?? 0)),
+            ],
+            'is_on_track' => $this->isOnTrack($summary, $targets),
+        ];
+    }
+
+    /**
+     * Get weekly nutrition summary
+     */
+    public function getWeeklySummary(int $userId, string $startDate, string $endDate): array
+    {
+        $summary = $this->foodLogRepository->getWeeklySummary(
+            $userId,
+            \Carbon\Carbon::parse($startDate),
+            \Carbon\Carbon::parse($endDate)
+        );
+
+        // Get user targets
+        $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
+        $user = $userRepository->find($userId);
+
+        $dailyTargets = [
+            'calories' => $user->daily_calorie_target ?? 2000,
+            'protein' => $user->daily_protein_target ?? 150,
+            'carbs' => $user->daily_carbs_target ?? 250,
+            'fat' => $user->daily_fat_target ?? 67,
+        ];
+
+        $weeklyTargets = [];
+        foreach ($dailyTargets as $key => $value) {
+            $weeklyTargets[$key] = $value * 7;
+        }
+
+        // Calculate adherence
+        $adherence = $this->calculateWeeklyAdherence($summary, $weeklyTargets);
+
+        return [
+            'period' => ['start' => $startDate, 'end' => $endDate],
+            'summary' => $summary,
+            'targets' => [
+                'daily' => $dailyTargets,
+                'weekly' => $weeklyTargets,
+            ],
+            'adherence' => $adherence,
+            'trends' => $this->analyzeWeeklyTrends($summary),
+        ];
+    }
+
+    /**
+     * Compare intake vs targets
+     */
+    public function compareWithTargets(int $userId, array $intake): array
+    {
+        $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
+        $user = $userRepository->find($userId);
+
+        $targets = [
+            'calories' => $user->daily_calorie_target ?? 2000,
+            'protein' => $user->daily_protein_target ?? 150,
+            'carbs' => $user->daily_carbs_target ?? 250,
+            'fat' => $user->daily_fat_target ?? 67,
+        ];
+
+        $comparison = [];
+        foreach ($targets as $key => $target) {
+            $actual = $intake[$key] ?? 0;
+            $difference = $actual - $target;
+            $percentage = $target > 0 ? ($actual / $target) * 100 : 0;
+
+            $comparison[$key] = [
+                'actual' => $actual,
+                'target' => $target,
+                'difference' => $difference,
+                'percentage' => $percentage,
+                'status' => $this->getStatus($difference, $key),
+            ];
+        }
+
+        return $comparison;
+    }
+
+    /**
+     * Helper Methods
+     */
+    private function isOnTrack(array $summary, array $targets): bool
+    {
+        $calories = $summary['total_calories'] ?? 0;
+        $targetCalories = $targets['calories'] ?? 2000;
+
+        // Within ±10% of target
+        $lowerBound = $targetCalories * 0.9;
+        $upperBound = $targetCalories * 1.1;
+
+        return $calories >= $lowerBound && $calories <= $upperBound;
+    }
+
+    private function calculateWeeklyAdherence(array $summary, array $targets): float
+    {
+        $totalCalories = $summary['totals']['total_calories'] ?? 0;
+        $targetCalories = $targets['calories'] ?? 14000; // 2000 * 7
+
+        if ($targetCalories <= 0) {
+            return 0;
+        }
+
+        $adherence = ($totalCalories / $targetCalories) * 100;
+
+        // Cap at 100% for visualization
+        return min($adherence, 100);
+    }
+
+    private function analyzeWeeklyTrends(array $summary): array
+    {
+        $dailyData = $summary['daily_data'] ?? [];
+
+        if (count($dailyData) < 2) {
+            return ['trend' => 'insufficient_data', 'volatility' => 0];
+        }
+
+        $calories = array_column($dailyData, 'daily_calories');
+
+        // Calculate trend (simple linear regression)
+        $n = count($calories);
+        $sumX = $sumY = $sumXY = $sumX2 = 0;
+
+        for ($i = 0; $i < $n; $i++) {
+            $sumX += $i;
+            $sumY += $calories[$i];
+            $sumXY += $i * $calories[$i];
+            $sumX2 += $i * $i;
+        }
+
+        $slope = ($n * $sumXY - $sumX * $sumY) / ($n * $sumX2 - $sumX * $sumX);
+
+        // Calculate volatility (standard deviation)
+        $mean = array_sum($calories) / $n;
+        $variance = 0;
+        foreach ($calories as $value) {
+            $variance += pow($value - $mean, 2);
+        }
+        $variance /= $n;
+        $stdDev = sqrt($variance);
+        $volatility = ($mean > 0) ? ($stdDev / $mean) * 100 : 0;
+
+        return [
+            'trend' => $slope > 10 ? 'increasing' : ($slope < -10 ? 'decreasing' : 'stable'),
+            'trend_slope' => $slope,
+            'volatility' => $volatility,
+            'consistency' => 100 - min($volatility, 100),
+        ];
+    }
+
+    private function getStatus(float $difference, string $metric): string
+    {
+        $tolerances = [
+            'calories' => 100,
+            'protein' => 20,
+            'carbs' => 30,
+            'fat' => 10,
+        ];
+
+        $tolerance = $tolerances[$metric] ?? 50;
+
+        if (abs($difference) <= $tolerance) {
+            return 'on_target';
+        } elseif ($difference > 0) {
+            return 'over';
+        } else {
+            return 'under';
+        }
+    }
+}
