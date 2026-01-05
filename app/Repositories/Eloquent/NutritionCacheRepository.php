@@ -1,11 +1,10 @@
 <?php
 
-namespace App\Repositories;
+namespace App\Repositories\Eloquent;
 
 use App\Interfaces\Repositories\NutritionCacheRepositoryInterface;
 use App\Models\NutritionCache;
-use Illuminate\Support\Facades\Cache as LaravelCache;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\{DB, Log};
 
 class NutritionCacheRepository implements NutritionCacheRepositoryInterface
 {
@@ -42,7 +41,7 @@ class NutritionCacheRepository implements NutritionCacheRepositoryInterface
 
             return true;
         } catch (\Exception $e) {
-            \Log::error('Failed to store nutrition cache', [
+            Log::error('Failed to store nutrition cache', [
                 'query_hash' => $queryHash,
                 'error' => $e->getMessage(),
             ]);

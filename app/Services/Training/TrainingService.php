@@ -39,7 +39,7 @@ class TrainingService implements TrainingServiceInterface
     /**
      * Log training session
      */
-    public function logTrainingSession(int $userId, array $data): array
+    public function logTrainingSession(string $userId, array $data): array
     {
         $user = $this->userRepository->find($userId);
 
@@ -92,7 +92,7 @@ class TrainingService implements TrainingServiceInterface
     /**
      * Get training recommendations
      */
-    public function getTrainingRecommendations(int $userId, array $goals): array
+    public function getTrainingRecommendations(string $userId, array $goals): array
     {
         $user = $this->userRepository->find($userId);
         $trainingHistory = $this->trainingRepository->getUserLogs($userId);
@@ -243,7 +243,7 @@ class TrainingService implements TrainingServiceInterface
     /**
      * Suggest training plan
      */
-    public function suggestTrainingPlan(int $userId, string $goal, int $daysPerWeek): array
+    public function suggestTrainingPlan(string $userId, string $goal, int $daysPerWeek): array
     {
         $plans = [
             'lose_weight' => [
@@ -384,7 +384,7 @@ class TrainingService implements TrainingServiceInterface
         return $tips;
     }
 
-    private function personalizePlan(array $plan, int $userId): array
+    private function personalizePlan(array $plan, string $userId): array
     {
         $user = $this->userRepository->find($userId);
 

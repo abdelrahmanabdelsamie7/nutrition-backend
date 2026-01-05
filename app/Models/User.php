@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-use App\Traits\CalculateBmrTrait;
+use App\Traits\{CalculateBmrTrait, UsesUuid};
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class User extends Authenticatable implements JWTSubject
 {
-    use HasFactory, Notifiable, SoftDeletes, CalculateBmrTrait;
+    use HasFactory, Notifiable, SoftDeletes, CalculateBmrTrait, UsesUuid;
     protected $fillable = [
         'name',
         'email',

@@ -9,9 +9,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('nutrition_cache', function (Blueprint $table) {
-            $table->id();
+          $table->uuid('id')->primary();
 
-            $table->string('food_query_hash', 64)->unique();
+            $table->string('food_query_hash')->unique();
             $table->text('food_query');
 
             // Nutrition data
@@ -26,8 +26,7 @@ return new class extends Migration
             $table->integer('hit_count')->default(0);
             $table->timestamp('last_accessed_at')->nullable();
             $table->timestamp('cached_at')->useCurrent();
-            $table->timestamp('expires_at');
-
+            $table->timestamp('expires_at')->nullable();
             $table->timestamps();
 
             // Indexes

@@ -490,7 +490,7 @@ class VoiceService implements VoiceServiceInterface
     /**
      * Save audio file for future reference (optional)
      */
-    public function saveAudioFile(UploadedFile $audioFile, int $userId): string
+    public function saveAudioFile(UploadedFile $audioFile, string $userId): string
     {
         $path = "voices/user_{$userId}/" . date('Y/m/d');
         $filename = uniqid('voice_') . '.' . $audioFile->getClientOriginalExtension();
@@ -509,7 +509,7 @@ class VoiceService implements VoiceServiceInterface
     /**
      * Process audio in background (async)
      */
-    public function processAsync(UploadedFile $audioFile, int $userId): void
+    public function processAsync(UploadedFile $audioFile, string $userId): void
     {
         // This would typically dispatch a job
         // For example: ProcessVoiceJob::dispatch($audioFile, $userId);

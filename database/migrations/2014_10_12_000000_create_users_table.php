@@ -27,10 +27,10 @@ return new class extends Migration
             $table->decimal('tdee', 8, 2)->nullable(); // Total Daily Energy Expenditure
 
             // Goals & Preferences
-            $table->enum('activity_level', ['sedentary', 'light', 'moderate', 'active', 'very_active'])->default('moderate');
-            $table->enum('goal', ['lose_weight', 'maintain', 'gain_weight', 'build_muscle'])->default('maintain');
-            $table->enum('diet_type', ['balanced', 'keto', 'vegetarian', 'vegan', 'mediterranean'])->default('balanced');
-            $table->enum('budget_level', ['low', 'medium', 'high'])->default('medium');
+            $table->enum('activity_level', ['sedentary', 'light', 'moderate', 'active', 'very_active'])->default('moderate')->nullable();
+            $table->enum('goal', ['lose_weight', 'maintain', 'gain_weight', 'build_muscle'])->default('maintain')->nullable();
+            $table->enum('diet_type', ['balanced', 'keto', 'vegetarian', 'vegan', 'mediterranean'])->default('balanced')->nullable();
+            $table->enum('budget_level', ['low', 'medium', 'high'])->default('medium')->nullable();
 
             // Daily targets (calculated based on profile)
             $table->integer('daily_calorie_target')->nullable();

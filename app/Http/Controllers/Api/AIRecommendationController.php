@@ -93,7 +93,7 @@ class AIRecommendationController extends BaseController
         }
     }
 
-    private function generateWeeklyRecommendation(int $userId): array
+    private function generateWeeklyRecommendation(string $userId)
     {
         $user = $this->userRepository->find($userId);
         $startDate = now()->subDays(7);

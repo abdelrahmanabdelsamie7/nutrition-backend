@@ -16,7 +16,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         parent::__construct($model);
     }
 
-    public function getUserLogs(int $userId, ?Carbon $date = null): Collection
+    public function getUserLogs(string $userId, ?Carbon $date = null): Collection
     {
         $query = $this->model->where('user_id', $userId);
 
@@ -27,12 +27,12 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         return $query->orderBy('logged_at', 'desc')->get();
     }
 
-    public function getDailySummary(int $userId, Carbon $date): array
+    public function getDailySummary(string $userId, Carbon $date): array
     {
         $cacheKey = "user_{$userId}_daily_summary_{$date->format('Y-m-d')}";
 
         return Cache::remember($cacheKey, 300, function () use ($userId, $date) {
-            return DB::table('food_logs')
+            $result = DB::table('food_logs')
                 ->select(
                     DB::raw('SUM(calories) as total_calories'),
                     DB::raw('SUM(protein) as total_protein'),
@@ -44,8 +44,18 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
                 )
                 ->where('user_id', $userId)
                 ->whereDate('logged_at', $date)
-                ->first()
-                ?->toArray() ?? [
+                ->first();
+
+            // Convert stdClass to array properly
+            if ($result) {
+                // Method 1: Using json decode/encode (safe)
+                $data = json_decode(json_encode($result), true);
+
+                // Method 2: Manual casting (faster)
+                // $data = (array) $result;
+
+                // Ensure all keys exist
+                return array_merge([
                     'total_calories' => 0,
                     'total_protein' => 0,
                     'total_carbs' => 0,
@@ -53,11 +63,22 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
                     'meal_count' => 0,
                     'avg_meal_calories' => 0,
                     'meal_types' => ''
-                ];
+                ], $data);
+            }
+
+            return [
+                'total_calories' => 0,
+                'total_protein' => 0,
+                'total_carbs' => 0,
+                'total_fat' => 0,
+                'meal_count' => 0,
+                'avg_meal_calories' => 0,
+                'meal_types' => ''
+            ];
         });
     }
 
-    public function getWeeklySummary(int $userId, Carbon $startDate, Carbon $endDate): array
+    public function getWeeklySummary(string $userId, Carbon $startDate, Carbon $endDate): array
     {
         $cacheKey = "user_{$userId}_weekly_summary_{$startDate->format('Y-m-d')}_{$endDate->format('Y-m-d')}";
 
@@ -103,7 +124,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         });
     }
 
-    public function getMonthlyTrend(int $userId, int $months = 3): array
+    public function getMonthlyTrend(string $userId, int $months = 3): array
     {
         $startDate = now()->subMonths($months)->startOfMonth();
 
@@ -133,7 +154,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
             ->toArray();
     }
 
-    public function getMostLoggedFoods(int $userId, int $limit = 5): array
+    public function getMostLoggedFoods(string $userId, int $limit = 5): array
     {
         $cacheKey = "user_{$userId}_most_logged_foods_{$limit}";
 
@@ -172,7 +193,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         });
     }
 
-    public function getByMealType(int $userId, string $mealType, Carbon $date): Collection
+    public function getByMealType(string $userId, string $mealType, Carbon $date): Collection
     {
         return $this->model
             ->where('user_id', $userId)
@@ -182,7 +203,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
             ->get();
     }
 
-    public function getCalorieRange(int $userId, Carbon $date): array
+    public function getCalorieRange(string $userId, Carbon $date): array
     {
         $stats = DB::table('food_logs')
             ->select(
@@ -203,7 +224,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         ];
     }
 
-    public function getBatchNutritionData(int $userId, array $dates): array
+    public function getBatchNutritionData(string $userId, array $dates): array
     {
         $formattedDates = array_map(function ($date) {
             return Carbon::parse($date)->format('Y-m-d');
@@ -226,7 +247,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
             ->toArray();
     }
 
-    public function search(int $userId, string $keyword, ?Carbon $startDate = null, ?Carbon $endDate = null): Collection
+    public function search(string $userId, string $keyword, ?Carbon $startDate = null, ?Carbon $endDate = null): Collection
     {
         $query = $this->model->where('user_id', $userId);
 
@@ -246,7 +267,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         return $query->orderBy('logged_at', 'desc')->get();
     }
 
-    public function getAverageDailyIntake(int $userId, int $days = 7): array
+    public function getAverageDailyIntake(string $userId, int $days = 7): array
     {
         $startDate = now()->subDays($days);
 
@@ -273,7 +294,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         ];
     }
 
-    public function getStatistics(int $userId): array
+    public function getStatistics(string $userId): array
     {
         $cacheKey = "user_{$userId}_food_statistics";
 
@@ -322,7 +343,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
         });
     }
 
-    public function hasLoggedToday(int $userId): bool
+    public function hasLoggedToday(string $userId): bool
     {
         return $this->model
             ->where('user_id', $userId)
@@ -330,7 +351,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
             ->exists();
     }
 
-    public function getLastLoggedFood(int $userId): ?FoodLog
+    public function getLastLoggedFood(string $userId): ?FoodLog
     {
         return $this->model
             ->where('user_id', $userId)
@@ -341,7 +362,7 @@ class FoodLogRepository extends BaseRepository implements FoodLogRepositoryInter
     /**
      * Helper Methods
      */
-    private function calculateConsistency(int $userId): array
+    private function calculateConsistency(string $userId): array
     {
         $logsByDay = DB::table('food_logs')
             ->select(DB::raw('DATE(logged_at) as log_date'))

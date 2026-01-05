@@ -7,7 +7,7 @@ use Carbon\Carbon;
 class AIRecommendationDTO
 {
     public function __construct(
-        public int $userId,
+        public string $userId,
         public Carbon $periodStart,
         public Carbon $periodEnd,
         public string $periodType,

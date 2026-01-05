@@ -30,7 +30,7 @@ class RepositoryServiceProvider extends ServiceProvider
 
         $this->app->bind(
             \App\Interfaces\Repositories\NutritionCacheRepositoryInterface::class,
-            \App\Repositories\NutritionCacheRepository::class
+            \App\Repositories\Eloquent\NutritionCacheRepository::class
         );
 
         $this->app->bind(

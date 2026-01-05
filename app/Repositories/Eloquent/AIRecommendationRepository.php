@@ -16,7 +16,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
         parent::__construct($model);
     }
 
-    public function getActiveRecommendations(int $userId): Collection
+    public function getActiveRecommendations(string $userId): Collection
     {
         return $this->model
             ->where('user_id', $userId)
@@ -25,7 +25,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->get();
     }
 
-    public function getLatestRecommendation(int $userId): ?AIRecommendation
+    public function getLatestRecommendation(string $userId): ?AIRecommendation
     {
         return $this->model
             ->where('user_id', $userId)
@@ -34,7 +34,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->first();
     }
 
-    public function getByPeriod(int $userId, Carbon $startDate, Carbon $endDate): Collection
+    public function getByPeriod(string $userId, Carbon $startDate, Carbon $endDate): Collection
     {
         return $this->model
             ->where('user_id', $userId)
@@ -44,7 +44,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->get();
     }
 
-    public function getWeeklyRecommendations(int $userId, int $weeks = 4): Collection
+    public function getWeeklyRecommendations(string $userId, int $weeks = 4): Collection
     {
         $startDate = now()->subWeeks($weeks)->startOfWeek();
 
@@ -56,7 +56,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->get();
     }
 
-    public function existsForPeriod(int $userId, Carbon $startDate, Carbon $endDate): bool
+    public function existsForPeriod(string $userId, Carbon $startDate, Carbon $endDate): bool
     {
         return $this->model
             ->where('user_id', $userId)
@@ -89,7 +89,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
         return true;
     }
 
-    public function getRecommendationsNeedingFeedback(int $userId): Collection
+    public function getRecommendationsNeedingFeedback(string $userId): Collection
     {
         return $this->model
             ->where('user_id', $userId)
@@ -99,7 +99,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->get();
     }
 
-    public function getMostHelpfulRecommendations(int $userId, int $limit = 5): Collection
+    public function getMostHelpfulRecommendations(string $userId, int $limit = 5): Collection
     {
         return $this->model
             ->where('user_id', $userId)
@@ -109,7 +109,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->get();
     }
 
-    public function deactivateOldRecommendations(int $userId): int
+    public function deactivateOldRecommendations(string $userId): int
     {
         return $this->model
             ->where('user_id', $userId)
@@ -118,7 +118,7 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->update(['is_active' => false]);
     }
 
-    public function getAIUsageStats(int $userId): array
+    public function getAIUsageStats(string $userId): array
     {
         $cacheKey = "user_{$userId}_ai_usage_stats";
 

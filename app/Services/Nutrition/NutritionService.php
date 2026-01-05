@@ -23,7 +23,7 @@ class NutritionService implements NutritionServiceInterface
     /**
      * Process text input and get nutrition data
      */
-    public function processTextInput(string $text, int $userId): NutritionDataDTO
+    public function processTextInput(string $text, string $userId): NutritionDataDTO
     {
         Log::info('Processing text input', ['user_id' => $userId, 'text' => $text]);
 
@@ -64,7 +64,7 @@ class NutritionService implements NutritionServiceInterface
     /**
      * Process voice input and get nutrition data
      */
-    public function processVoiceInput(UploadedFile $audioFile, int $userId): NutritionDataDTO
+    public function processVoiceInput(UploadedFile $audioFile, string $userId): NutritionDataDTO
     {
         Log::info('Processing voice input', ['user_id' => $userId, 'size' => $audioFile->getSize()]);
 
@@ -112,9 +112,9 @@ class NutritionService implements NutritionServiceInterface
 
         foreach ($segments as $segment) {
             $segment = trim($segment);
-            if (!empty($segment)) {
-                $items[] = $this->calorieService->parseFoodItem($segment);
-            }
+            // if (!empty($segment)) {
+            //     $items[] = $this->calorieService->parseFoodItem($segment);
+            // }
         }
 
         return $items;
@@ -161,7 +161,7 @@ class NutritionService implements NutritionServiceInterface
     /**
      * Get daily nutrition summary
      */
-    public function getDailySummary(int $userId, string $date): array
+    public function getDailySummary(string $userId, string $date): array
     {
         $summary = $this->foodLogRepository->getDailySummary(
             $userId,
@@ -204,7 +204,7 @@ class NutritionService implements NutritionServiceInterface
     /**
      * Get weekly nutrition summary
      */
-    public function getWeeklySummary(int $userId, string $startDate, string $endDate): array
+    public function getWeeklySummary(string $userId, string $startDate, string $endDate): array
     {
         $summary = $this->foodLogRepository->getWeeklySummary(
             $userId,
@@ -246,7 +246,7 @@ class NutritionService implements NutritionServiceInterface
     /**
      * Compare intake vs targets
      */
-    public function compareWithTargets(int $userId, array $intake): array
+    public function compareWithTargets(string $userId, array $intake): array
     {
         $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
         $user = $userRepository->find($userId);

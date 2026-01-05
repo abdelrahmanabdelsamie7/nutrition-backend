@@ -8,7 +8,6 @@ use App\Http\Controllers\Api\{
     AIRecommendationController,
     UserController
 };
-
 /*
 |--------------------------------------------------------------------------
 | API Routes

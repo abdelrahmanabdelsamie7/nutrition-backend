@@ -2,42 +2,184 @@
 
 namespace App\Services\External;
 
-use Google\Cloud\AIPlatform\V1\PredictionServiceClient;
-use Google\Cloud\AIPlatform\V1\Content;
-use Google\Cloud\AIPlatform\V1\Part;
-use Google\Cloud\AIPlatform\V1\PredictResponse;
-use Google\Cloud\AIPlatform\V1\SafetySetting;
-use Google\Cloud\AIPlatform\V1\HarmCategory;
-use Google\Cloud\AIPlatform\V1\SafetyRating;
-use Google\ApiCore\ApiException;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
 use Illuminate\Support\Facades\Log;
-use App\Exceptions\ExternalServiceException;
+use Illuminate\Support\Facades\Cache;
+// use App\Exceptions\Exception;
+use Exception;
 
 class GeminiAIService
 {
-    private ?PredictionServiceClient $client;
-    private string $projectId;
-    private string $location;
-    private string $modelId;
+    private Client $client;
     private string $apiKey;
-    private array $safetySettings;
+    private string $baseUrl;
+    private string $model;
 
     public function __construct()
     {
-        $this->projectId = config('services.gemini.project_id');
-        $this->location = config('services.gemini.location', 'us-central1');
-        $this->modelId = config('services.gemini.model_id', 'gemini-2.0-flash-exp');
         $this->apiKey = config('services.gemini.api_key');
+        $this->model = config('services.gemini.model', 'gemini-2.0-flash-exp');
+        $this->baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta/');
 
-        // Initialize safety settings
-        $this->safetySettings = $this->initializeSafetySettings();
-
-        // Initialize client (lazy loading)
-        $this->client = null;
+        $this->client = new Client([
+            'base_uri' => $this->baseUrl,
+            'timeout' => 30,
+            'headers' => [
+                'Content-Type' => 'application/json',
+            ],
+        ]);
     }
 
     /**
-     * Generate AI response for nutrition/fitness recommendations
+     * Call Gemini API directly via HTTP
+     */
+    public function callGeminiAPI(string $prompt, array $parameters = []): string
+    {
+        if (empty($this->apiKey)) {
+            throw new Exception('Gemini API key not configured');
+        }
+
+        $cacheKey = 'gemini_cache:' . md5($prompt . json_encode($parameters));
+
+        // Check cache first
+        if (Cache::has($cacheKey)) {
+            Log::info('Using cached Gemini response');
+            return Cache::get($cacheKey);
+        }
+
+        try {
+            Log::info('Calling Gemini API', [
+                'model' => $this->model,
+                'prompt_length' => strlen($prompt),
+            ]);
+
+            $response = $this->client->post("models/{$this->model}:generateContent", [
+                'query' => ['key' => $this->apiKey],
+                'json' => [
+                    'contents' => [
+                        [
+                            'parts' => [
+                                ['text' => $prompt]
+                            ]
+                        ]
+                    ],
+                    'generationConfig' => array_merge([
+                        'temperature' => 0.7,
+                        'maxOutputTokens' => 1024,
+                        'topP' => 0.95,
+                        'topK' => 40,
+                    ], $parameters),
+                    'safetySettings' => [
+                        [
+                            'category' => 'HARM_CATEGORY_HATE_SPEECH',
+                            'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                        ],
+                        [
+                            'category' => 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                            'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                        ],
+                        [
+                            'category' => 'HARM_CATEGORY_HARASSMENT',
+                            'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                        ],
+                        [
+                            'category' => 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                            'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                        ]
+                    ]
+                ],
+                'http_errors' => false,
+            ]);
+
+            $statusCode = $response->getStatusCode();
+            $responseBody = $response->getBody()->getContents();
+            $data = json_decode($responseBody, true);
+
+            Log::debug('Gemini API Response', [
+                'status' => $statusCode,
+                'response_keys' => array_keys($data),
+            ]);
+
+            if ($statusCode !== 200) {
+                Log::error('Gemini API error', [
+                    'status' => $statusCode,
+                    'error' => $data['error']['message'] ?? 'Unknown error',
+                ]);
+
+                throw new Exception(
+                    'Gemini API error: ' . ($data['error']['message'] ?? "Status: {$statusCode}")
+                );
+            }
+
+            // Extract text from response
+            $text = $this->extractTextFromResponse($data);
+
+            if (empty($text)) {
+                Log::error('Empty response from Gemini API', ['response' => $data]);
+                throw new Exception('Empty response from Gemini API');
+            }
+
+            // Cache for 6 hours
+            Cache::put($cacheKey, $text, now()->addHours(6));
+
+            Log::info('Gemini API response received', [
+                'response_length' => strlen($text),
+            ]);
+
+            return $text;
+        } catch (RequestException $e) {
+            Log::error('Gemini API request failed', [
+                'error' => $e->getMessage(),
+                'code' => $e->getCode(),
+            ]);
+
+            throw new Exception('Gemini API request failed: ' . $e->getMessage());
+        } catch (\Exception $e) {
+            Log::error('Unexpected error in Gemini service', [
+                'error' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Extract text from Gemini response
+     */
+    private function extractTextFromResponse(array $response): string
+    {
+        try {
+            // Check for safety blocks
+            if (isset($response['promptFeedback']['blockReason'])) {
+                throw new Exception(
+                    'Content blocked by safety filter: ' . $response['promptFeedback']['blockReason']
+                );
+            }
+
+            // Extract text from candidates
+            if (isset($response['candidates'][0]['content']['parts'][0]['text'])) {
+                return trim($response['candidates'][0]['content']['parts'][0]['text']);
+            }
+
+            // Alternative path
+            if (isset($response['candidates'][0]['text'])) {
+                return trim($response['candidates'][0]['text']);
+            }
+
+            return '';
+        } catch (\Exception $e) {
+            Log::error('Failed to extract text from Gemini response', [
+                'error' => $e->getMessage(),
+                'response_structure' => array_keys($response),
+            ]);
+
+            return '';
+        }
+    }
+
+    /**
+     * Generate nutrition/fitness recommendations
      */
     public function generateRecommendation(array $userData, array $nutritionSummary, array $trainingSummary): array
     {
@@ -45,18 +187,9 @@ class GeminiAIService
 
         try {
             $response = $this->callGeminiAPI($prompt);
-
             return $this->parseRecommendationResponse($response);
-        } catch (ApiException $e) {
-            Log::error('Gemini API Exception', [
-                'error' => $e->getMessage(),
-                'code' => $e->getCode(),
-                'user_id' => $userData['id'] ?? 'unknown',
-            ]);
-
-            return $this->getFallbackRecommendation($userData, $nutritionSummary);
         } catch (\Exception $e) {
-            Log::error('Unexpected error in Gemini service', [
+            Log::error('Gemini recommendation failed', [
                 'error' => $e->getMessage(),
                 'user_id' => $userData['id'] ?? 'unknown',
             ]);
@@ -66,7 +199,7 @@ class GeminiAIService
     }
 
     /**
-     * Generate meal suggestions based on budget and preferences
+     * Generate meal suggestions
      */
     public function generateMealSuggestions(array $userData, array $budgetConstraints): array
     {
@@ -74,7 +207,6 @@ class GeminiAIService
 
         try {
             $response = $this->callGeminiAPI($prompt);
-
             return $this->parseMealSuggestionsResponse($response);
         } catch (\Exception $e) {
             Log::error('Failed to generate meal suggestions', [
@@ -87,116 +219,7 @@ class GeminiAIService
     }
 
     /**
-     * Analyze nutrition patterns
-     */
-    public function analyzeNutritionPatterns(array $nutritionData): array
-    {
-        $prompt = $this->buildAnalysisPrompt($nutritionData);
-
-        try {
-            $response = $this->callGeminiAPI($prompt);
-
-            return $this->parseAnalysisResponse($response);
-        } catch (\Exception $e) {
-            Log::error('Failed to analyze nutrition patterns', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return [
-                'analysis' => 'Unable to analyze patterns at this time.',
-                'trends' => [],
-                'recommendations' => [],
-            ];
-        }
-    }
-
-    /**
-     * Call Gemini API with prompt
-     */
-    public function callGeminiAPI(string $prompt, array $parameters = []): string
-    {
-        if (!$this->client) {
-            $this->initializeClient();
-        }
-
-        try {
-            // Build content
-            $content = (new Content())
-                ->setRole('user')
-                ->setParts([(new Part())->setText($prompt)]);
-
-            // Prepare request
-            $endpoint = "projects/{$this->projectId}/locations/{$this->location}/publishers/google/models/{$this->modelId}";
-
-            $request = [
-                'endpoint' => $endpoint,
-                'instances' => [$content],
-                'parameters' => array_merge([
-                    'temperature' => 0.7,
-                    'maxOutputTokens' => 1024,
-                    'topP' => 0.95,
-                    'topK' => 40,
-                ], $parameters),
-            ];
-
-            // Add safety settings
-            $request['safety_settings'] = $this->safetySettings;
-
-            Log::info('Calling Gemini API', [
-                'model' => $this->modelId,
-                'prompt_length' => strlen($prompt),
-            ]);
-
-            /** @var PredictResponse $apiResponse */
-            $apiResponse = $this->client->predict($request);
-
-            $predictions = $apiResponse->getPredictions();
-
-            if (empty($predictions)) {
-                throw new ExternalServiceException('No predictions returned from Gemini API');
-            }
-
-            $firstPrediction = $predictions[0];
-            $content = $firstPrediction->getContent();
-            $parts = $content->getParts();
-
-            if (empty($parts)) {
-                throw new ExternalServiceException('No content parts in prediction');
-            }
-
-            $responseText = $parts[0]->getText();
-
-            // Check safety ratings
-            $safetyRatings = $firstPrediction->getSafetyRatings();
-            if ($safetyRatings) {
-                foreach ($safetyRatings as $rating) {
-                    /** @var SafetyRating $rating */
-                    if ($rating->getBlocked()) {
-                        throw new ExternalServiceException(
-                            'Content blocked by safety filter: ' . $rating->getCategory()
-                        );
-                    }
-                }
-            }
-
-            Log::info('Gemini API response received', [
-                'response_length' => strlen($responseText),
-            ]);
-
-            return $responseText;
-        } catch (ApiException $e) {
-            Log::error('Gemini API error', [
-                'status' => $e->getStatus(),
-                'details' => $e->getDetails(),
-                'metadata' => $e->getMetadata(),
-            ]);
-
-            throw $e;
-        }
-    }
-
-    /**
-     * Build recommendation prompt
+     * Build recommendation prompt (keep as before)
      */
     private function buildRecommendationPrompt(array $userData, array $nutritionSummary, array $trainingSummary): string
     {
@@ -241,7 +264,7 @@ class GeminiAIService
             },
             "meal_suggestions": {
                 "breakfast": "suggestion",
-                "lunch": "suggestion",
+                "lunch": "suggestion", 
                 "dinner": "suggestion",
                 "snacks": ["suggestion1", "suggestion2"]
             },
@@ -253,7 +276,7 @@ class GeminiAIService
     }
 
     /**
-     * Build meal suggestion prompt
+     * Build meal suggestion prompt (keep as before)
      */
     private function buildMealSuggestionPrompt(array $userData, array $budgetConstraints): string
     {
@@ -271,7 +294,7 @@ class GeminiAIService
 
         For each meal plan, include:
         1. Breakfast with calories and protein
-        2. Lunch with calories and protein
+        2. Lunch with calories and protein  
         3. Dinner with calories and protein
         4. Two snacks with calories and protein
         5. Total daily calories and protein
@@ -296,7 +319,7 @@ class GeminiAIService
                     ],
                     "total_calories": X,
                     "total_protein": X,
-                    "estimated_cost": "$X-X"
+                    "estimated_cost": "-X"
                 }
             ]
         }
@@ -306,7 +329,7 @@ class GeminiAIService
     }
 
     /**
-     * Parse recommendation response
+     * Parse recommendation response (keep as before)
      */
     private function parseRecommendationResponse(string $response): array
     {
@@ -335,7 +358,7 @@ class GeminiAIService
 
             // Add metadata
             $data['generated_at'] = now()->toISOString();
-            $data['ai_model'] = $this->modelId;
+            $data['ai_model'] = $this->model;
 
             return $data;
         } catch (\Exception $e) {
@@ -354,61 +377,50 @@ class GeminiAIService
                 'raw_response' => $response,
                 'parse_error' => $e->getMessage(),
                 'generated_at' => now()->toISOString(),
-                'ai_model' => $this->modelId,
+                'ai_model' => $this->model,
             ];
         }
     }
 
     /**
-     * Initialize Gemini client
+     * Parse meal suggestions response
      */
-    private function initializeClient(): void
+    private function parseMealSuggestionsResponse(string $response): array
     {
-        if (!$this->apiKey) {
-            throw new \Exception('Gemini API key not configured');
-        }
-
         try {
-            $this->client = new PredictionServiceClient([
-                'credentials' => $this->apiKey,
-                'transport' => 'rest',
-            ]);
+            $data = json_decode($response, true);
 
-            Log::info('Gemini client initialized successfully');
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                preg_match('/\{.*\}/s', $response, $matches);
+                if (isset($matches[0])) {
+                    $data = json_decode($matches[0], true);
+                }
+            }
+
+            if (json_last_error() !== JSON_ERROR_NONE || !$data) {
+                throw new \Exception('Invalid JSON response for meal suggestions');
+            }
+
+            if (!isset($data['meal_plans']) || !is_array($data['meal_plans'])) {
+                throw new \Exception('Missing meal_plans in response');
+            }
+
+            $data['generated_at'] = now()->toISOString();
+            $data['ai_model'] = $this->model;
+
+            return $data;
         } catch (\Exception $e) {
-            Log::error('Failed to initialize Gemini client', [
+            Log::warning('Failed to parse meal suggestions', [
                 'error' => $e->getMessage(),
+                'response' => substr($response, 0, 500),
             ]);
 
-            throw new ExternalServiceException(
-                'Failed to initialize AI service: ' . $e->getMessage()
-            );
+            return $this->getFallbackMealSuggestions([]);
         }
     }
 
     /**
-     * Initialize safety settings
-     */
-    private function initializeSafetySettings(): array
-    {
-        return [
-            (new SafetySetting())
-                ->setCategory(HarmCategory::HARM_CATEGORY_HATE_SPEECH)
-                ->setThreshold(SafetySetting\HarmBlockThreshold::BLOCK_MEDIUM_AND_ABOVE),
-            (new SafetySetting())
-                ->setCategory(HarmCategory::HARM_CATEGORY_DANGEROUS_CONTENT)
-                ->setThreshold(SafetySetting\HarmBlockThreshold::BLOCK_MEDIUM_AND_ABOVE),
-            (new SafetySetting())
-                ->setCategory(HarmCategory::HARM_CATEGORY_HARASSMENT)
-                ->setThreshold(SafetySetting\HarmBlockThreshold::BLOCK_MEDIUM_AND_ABOVE),
-            (new SafetySetting())
-                ->setCategory(HarmCategory::HARM_CATEGORY_SEXUALLY_EXPLICIT)
-                ->setThreshold(SafetySetting\HarmBlockThreshold::BLOCK_MEDIUM_AND_ABOVE),
-        ];
-    }
-
-    /**
-     * Helper methods for formatting
+     * Helper methods for formatting (keep as before)
      */
     private function formatUserProfile(array $userData): string
     {
@@ -454,7 +466,7 @@ class GeminiAIService
     }
 
     /**
-     * Fallback recommendations when AI fails
+     * Fallback recommendations (keep as before)
      */
     private function getFallbackRecommendation(array $userData, array $nutritionSummary): array
     {
@@ -560,5 +572,36 @@ class GeminiAIService
             ],
             'is_fallback' => true,
         ];
+    }
+
+    /**
+     * Test Gemini API connection
+     */
+    public function testConnection(): array
+    {
+        try {
+            $testPrompt = 'Hello, respond with "Gemini API is working" in JSON format: {"status": "ok", "message": "API is working"}';
+
+            $response = $this->callGeminiAPI($testPrompt, [
+                'maxOutputTokens' => 100,
+                'temperature' => 0.1,
+            ]);
+
+            $data = json_decode($response, true);
+
+            return [
+                'status' => 'connected',
+                'response' => $data,
+                'message' => 'Gemini API is responding normally',
+                'model' => $this->model,
+            ];
+        } catch (\Exception $e) {
+            return [
+                'status' => 'disconnected',
+                'error' => $e->getMessage(),
+                'api_key_set' => !empty($this->apiKey),
+                'message' => 'Gemini API connection failed',
+            ];
+        }
     }
 }

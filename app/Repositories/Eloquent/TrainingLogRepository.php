@@ -16,7 +16,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
         parent::__construct($model);
     }
 
-    public function getUserLogs(int $userId, ?Carbon $date = null): Collection
+    public function getUserLogs(string $userId, ?Carbon $date = null): Collection
     {
         $query = $this->model->where('user_id', $userId);
 
@@ -27,7 +27,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
         return $query->orderBy('performed_at', 'desc')->get();
     }
 
-    public function getDailySummary(int $userId, Carbon $date): array
+    public function getDailySummary(string $userId, Carbon $date): array
     {
         return DB::table('training_logs')
             ->select(
@@ -49,7 +49,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
             ];
     }
 
-    public function getWeeklySummary(int $userId, Carbon $startDate, Carbon $endDate): array
+    public function getWeeklySummary(string $userId, Carbon $startDate, Carbon $endDate): array
     {
         $cacheKey = "user_{$userId}_training_weekly_{$startDate->format('Y-m-d')}_{$endDate->format('Y-m-d')}";
 
@@ -100,7 +100,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
         });
     }
 
-    public function getCaloriesByActivityType(int $userId, Carbon $startDate, Carbon $endDate): array
+    public function getCaloriesByActivityType(string $userId, Carbon $startDate, Carbon $endDate): array
     {
         return DB::table('training_logs')
             ->select(
@@ -125,7 +125,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
             ->toArray();
     }
 
-    public function getMostFrequentActivities(int $userId, int $limit = 5): array
+    public function getMostFrequentActivities(string $userId, int $limit = 5): array
     {
         return DB::table('training_logs')
             ->select(
@@ -143,7 +143,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
             ->toArray();
     }
 
-    public function getTrainingConsistency(int $userId, int $weeks = 4): array
+    public function getTrainingConsistency(string $userId, int $weeks = 4): array
     {
         $startDate = now()->subWeeks($weeks);
 
@@ -172,7 +172,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
         ];
     }
 
-    public function getTotalTrainingTime(int $userId, Carbon $startDate, Carbon $endDate): int
+    public function getTotalTrainingTime(string $userId, Carbon $startDate, Carbon $endDate): int
     {
         return (int) DB::table('training_logs')
             ->where('user_id', $userId)
@@ -180,7 +180,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
             ->sum('duration');
     }
 
-    public function hasTrainedToday(int $userId): bool
+    public function hasTrainedToday(string $userId): bool
     {
         return $this->model
             ->where('user_id', $userId)
@@ -188,7 +188,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
             ->exists();
     }
 
-    public function getLastTrainingSession(int $userId): ?array
+    public function getLastTrainingSession(string $userId): ?array
     {
         $session = $this->model
             ->where('user_id', $userId)
@@ -198,7 +198,7 @@ class TrainingLogRepository extends BaseRepository implements TrainingLogReposit
         return $session ? $session->toArray() : null;
     }
 
-    public function getTrainingStreak(int $userId): array
+    public function getTrainingStreak(string $userId): array
     {
         $trainingDays = DB::table('training_logs')
             ->select(DB::raw('DATE(performed_at) as training_date'))

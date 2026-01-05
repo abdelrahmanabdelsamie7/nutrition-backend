@@ -21,7 +21,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $this->model->where('email', $email)->first();
     }
 
-    public function updateProfile(int $userId, array $data): User
+    public function updateProfile(string $userId, array $data): User
     {
         $user = $this->findOrFail($userId);
         $user->fill($data);
@@ -34,7 +34,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $user;
     }
 
-    public function getUserStats(int $userId): array
+    public function getUserStats(string $userId): array
     {
         $cacheKey = "user_{$userId}_stats";
         return Cache::remember($cacheKey, 3600, function () use ($userId) {
@@ -104,7 +104,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $query->paginate($perPage)->toArray();
     }
 
-    public function getDailyProgress(int $userId, Carbon $date): array
+    public function getDailyProgress(string $userId, Carbon $date): array
     {
         $cacheKey = "user_{$userId}_daily_progress_{$date->format('Y-m-d')}";
         return Cache::remember($cacheKey, 300, function () use ($userId, $date) {
@@ -158,7 +158,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         });
     }
 
-    public function getWeeklySummary(int $userId, Carbon $startDate, Carbon $endDate): array
+    public function getWeeklySummary(string $userId, Carbon $startDate, Carbon $endDate): array
     {
         $user = $this->findOrFail($userId);
 
@@ -211,13 +211,13 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         ];
     }
 
-    public function getRemainingCalories(int $userId): float
+    public function getRemainingCalories(string $userId): float
     {
         $user = $this->findOrFail($userId);
         return $user->getRemainingCalories();
     }
 
-    public function getMostConsumedFoods(int $userId, int $limit = 5): array
+    public function getMostConsumedFoods(string $userId, int $limit = 5): array
     {
         return DB::table('food_logs')
             ->select(
@@ -258,7 +258,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         })->get();
     }
 
-    public function updateDailyTargets(int $userId, array $targets): bool
+    public function updateDailyTargets(string $userId, array $targets): bool
     {
         $user = $this->findOrFail($userId);
 
@@ -290,7 +290,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     /**
      * Helper Methods
      */
-    private function calculateActiveDays(int $userId): int
+    private function calculateActiveDays(string $userId): int
     {
         $firstLog = DB::table('food_logs')
             ->where('user_id', $userId)

@@ -21,12 +21,12 @@ abstract class BaseRepository implements BaseRepositoryInterface
         return $this->model->all($columns);
     }
 
-    public function find(int $id)
+    public function find(string $id)
     {
         return $this->model->find($id);
     }
 
-    public function findOrFail(int $id)
+    public function findOrFail(string $id)
     {
         return $this->model->findOrFail($id);
     }
@@ -46,13 +46,13 @@ abstract class BaseRepository implements BaseRepositoryInterface
         return $this->model->create($data);
     }
 
-    public function update(int $id, array $data): bool
+    public function update(string $id, array $data)
     {
         $model = $this->findOrFail($id);
         return $model->update($data);
     }
 
-    public function delete(int $id): bool
+    public function delete(string $id)
     {
         $model = $this->findOrFail($id);
         return $model->delete();

@@ -5,7 +5,7 @@ namespace App\DTOs;
 class NutritionDataDTO
 {
     public function __construct(
-        public int $userId,
+        public string $userId,
         public string $rawInput,
         public array $parsedItems,
         public float $calories,

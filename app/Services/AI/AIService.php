@@ -731,7 +731,7 @@ class AIService implements AIServiceInterface
         PROMPT;
     }
 
-    private function generateCacheKey(string $type, int $userId): string
+    private function generateCacheKey(string $type, string $userId): string
     {
         $date = date('Y-m-d');
         return "ai_{$type}_{$userId}_{$date}";

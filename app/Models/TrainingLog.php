@@ -2,13 +2,14 @@
 
 namespace App\Models;
 
+use App\Traits\UsesUuid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TrainingLog extends Model
 {
-    use HasFactory;
+    use HasFactory, UsesUuid;
     protected $fillable = [
         'user_id',
         'activity_name',
