@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class FoodLogResource extends JsonResource
@@ -21,7 +22,7 @@ class FoodLogResource extends JsonResource
             ],
 
             'source' => $this->source,
-            'meal_type' => $this->meal_type,
+            'meal_type' => $this->getTranslateEnum('meal_type', $this->meal_type),
             'food_time' => $this->food_time,
             'is_cached' => $this->is_cached,
 
@@ -35,5 +36,18 @@ class FoodLogResource extends JsonResource
                 ];
             }),
         ];
+    }
+    private function getTranslatedEnum(string $type, ?string $value): ?string
+    {
+        if (is_null($value)) {
+            return null;
+        }
+
+        $translations = [
+            'meal_type' => Lang::get('messages.meal_types'),
+            'overall_rating' => Lang::get('messages.overall_rating'),
+        ];
+
+        return $translations[$type][$value] ?? $value;
     }
 }

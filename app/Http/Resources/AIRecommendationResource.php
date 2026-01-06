@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class AIRecommendationResource extends JsonResource
@@ -14,7 +15,7 @@ class AIRecommendationResource extends JsonResource
             'period' => [
                 'start' => $this->period_start,
                 'end' => $this->period_end,
-                'type' => $this->period_type,
+                'type' => $this->getTranslatedEnum('period_type', $this->period_types),
                 'label' => $this->getPeriodLabel(),
             ],
 
@@ -25,7 +26,7 @@ class AIRecommendationResource extends JsonResource
             'training_suggestions' => $this->training_suggestions,
 
             'adherence_score' => (float) $this->adherence_score,
-            'overall_rating' => $this->overall_rating,
+            'overall_rating' => $this->getTranslateEnum('overall_rating', $this->overall_rating),
             'improvement_areas' => $this->improvement_areas,
 
             'ai_model' => $this->ai_model,
@@ -38,5 +39,18 @@ class AIRecommendationResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+    }
+    private function getTranslatedEnum(string $type, ?string $value): ?string
+    {
+        if (is_null($value)) {
+            return null;
+        }
+
+        $translations = [
+            'period_type' => Lang::get('messages.period_types'),
+            'overall_rating' => Lang::get('messages.overall_ratings'),
+        ];
+
+        return $translations[$type][$value] ?? $value;
     }
 }
