@@ -8,12 +8,14 @@ use App\Services\External\OpenAIService;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Carbon;
 
 class AIService implements AIServiceInterface
 {
     private GeminiAIService $geminiService;
     private OpenAIService $openAIService;
     private string $primaryModel = 'gemini';
+
     public function __construct(
         GeminiAIService $geminiService,
         OpenAIService $openAIService
@@ -83,6 +85,36 @@ class AIService implements AIServiceInterface
     }
 
     /**
+     * Generate Arabic nutrition recommendations
+     */
+    public function generateArabicNutritionRecommendations(
+        User $user,
+        array $nutritionSummary,
+        array $trainingSummary
+    ): array {
+        $cacheKey = $this->generateCacheKey('arabic_recommendations', $user->id);
+
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
+        // First get English recommendations
+        $englishRecommendations = $this->generateNutritionRecommendations(
+            $user,
+            $nutritionSummary,
+            $trainingSummary
+        );
+
+        // Translate to Arabic
+        $arabicRecommendations = $this->translateToArabic($englishRecommendations);
+
+        // Cache for 6 hours
+        Cache::put($cacheKey, $arabicRecommendations, now()->addHours(6));
+
+        return $arabicRecommendations;
+    }
+
+    /**
      * Generate meal suggestions
      */
     public function generateMealSuggestions(
@@ -119,6 +151,31 @@ class AIService implements AIServiceInterface
 
             return $this->getFallbackMealSuggestions($user);
         }
+    }
+
+    /**
+     * Generate Arabic meal suggestions
+     */
+    public function generateArabicMealSuggestions(
+        User $user,
+        array $nutritionData,
+        array $budgetConstraints
+    ): array {
+        $cacheKey = $this->generateCacheKey('arabic_meal_suggestions', $user->id);
+
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
+        // Get English suggestions
+        $englishSuggestions = $this->generateMealSuggestions($user, $nutritionData, $budgetConstraints);
+
+        // Translate to Arabic
+        $arabicSuggestions = $this->translateMealSuggestionsToArabic($englishSuggestions);
+
+        Cache::put($cacheKey, $arabicSuggestions, now()->addHours(12));
+
+        return $arabicSuggestions;
     }
 
     /**
@@ -172,23 +229,28 @@ class AIService implements AIServiceInterface
     }
 
     /**
-     * Analyze nutrition patterns
+     * Generate Arabic training recommendations
      */
-    public function analyzeNutritionPatterns(array $nutritionData): array
+    public function generateArabicTrainingRecommendations(User $user, array $trainingHistory): array
     {
-        try {
-            return $this->geminiService->analyzeNutritionPatterns($nutritionData);
-        } catch (\Exception $e) {
-            Log::error('Failed to analyze nutrition patterns', ['error' => $e->getMessage()]);
+        $cacheKey = $this->generateCacheKey('arabic_training_recommendations', $user->id);
 
-            return [
-                'analysis' => 'Pattern analysis unavailable',
-                'trends' => [],
-                'recommendations' => ['Maintain consistent logging for better analysis'],
-            ];
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
         }
+
+        // Get English recommendations
+        $englishRecommendations = $this->generateTrainingRecommendations($user, $trainingHistory);
+
+        // Translate to Arabic
+        $arabicRecommendations = $this->translateTrainingToArabic($englishRecommendations);
+
+        Cache::put($cacheKey, $arabicRecommendations, now()->addHours(24));
+
+        return $arabicRecommendations;
     }
 
+ 
     /**
      * Get AI model response
      */
@@ -273,11 +335,12 @@ class AIService implements AIServiceInterface
 
         // Check Gemini availability
         try {
-            // This would be a health check
+            $test = $this->geminiService->testConnection();
             $models['gemini'] = [
                 'name' => 'Gemini Flash 2.0',
-                'status' => 'available',
-                'capabilities' => ['recommendations', 'analysis', 'suggestions']
+                'status' => $test['status'] === 'connected' ? 'available' : 'unavailable',
+                'capabilities' => ['recommendations', 'analysis', 'suggestions'],
+                'details' => $test
             ];
         } catch (\Exception $e) {
             $models['gemini'] = [
@@ -289,10 +352,12 @@ class AIService implements AIServiceInterface
 
         // Check OpenAI availability
         try {
+            $test = $this->openAIService->testConnection();
             $models['openai'] = [
                 'name' => 'OpenAI GPT',
-                'status' => 'available',
-                'capabilities' => ['recommendations', 'analysis']
+                'status' => $test['status'] === 'connected' ? 'available' : 'unavailable',
+                'capabilities' => ['recommendations', 'analysis'],
+                'details' => $test
             ];
         } catch (\Exception $e) {
             $models['openai'] = [
@@ -303,6 +368,111 @@ class AIService implements AIServiceInterface
         }
 
         return $models;
+    }
+
+    /**
+     * Translate any response to Arabic
+     */
+    public function translateToArabic(array $data): array
+    {
+        $translations = [
+            // Keys translation
+            'summary' => 'ملخص',
+            'recommendations' => 'التوصيات',
+            'nutrition' => 'التغذية',
+            'training' => 'التدريب',
+            'goals' => 'الأهداف',
+            'meal_suggestions' => 'اقتراحات الوجبات',
+            'breakfast' => 'الفطور',
+            'lunch' => 'الغداء',
+            'dinner' => 'العشاء',
+            'snacks' => 'الوجبات الخفيفة',
+            'encouragement' => 'رسالة تشجيعية',
+            'adherence_score' => 'معدل الالتزام',
+            'generated_at' => 'تم الإنشاء في',
+            'model_used' => 'النموذج المستخدم',
+            'success' => 'نجاح',
+            'message' => 'الرسالة',
+            'data' => 'البيانات',
+            'period' => 'الفترة',
+            'start' => 'بداية',
+            'end' => 'نهاية',
+            'type' => 'النوع',
+            'label' => 'التسمية',
+            'nutrition_analysis' => 'تحليل التغذية',
+            'training_suggestions' => 'اقتراحات التدريب',
+            'overall_rating' => 'التقييم العام',
+            'improvement_areas' => 'مجالات التحسين',
+            'ai_model' => 'نموذج الذكاء الاصطناعي',
+            'is_active' => 'نشط',
+            'is_helpful' => 'مفيد',
+            'user_feedback' => 'ملاحظات المستخدم',
+            'viewed_at' => 'تم المشاهدة في',
+            'created_at' => 'تم الإنشاء في',
+            'updated_at' => 'تم التحديث في',
+
+            // Values translation
+            'Based on your goal to maintain' => 'بناءً على هدفك في الحفاظ على الوزن',
+            'Based on your goal to lose weight' => 'بناءً على هدفك في خسارة الوزن',
+            'Based on your goal to build muscle' => 'بناءً على هدفك في بناء العضلات',
+            'Based on your goal to gain weight' => 'بناءً على هدفك في زيادة الوزن',
+            'Track calories to maintain current weight' => 'تتبع السعرات الحرارية للحفاظ على الوزن الحالي',
+            'Balance macronutrients for optimal health' => 'وازن المغذيات الكبرى لصحة مثالية',
+            'Include variety in your diet' => 'أضف تنوعاً إلى نظامك الغذائي',
+            'Listen to hunger and fullness cues' => 'استمع لإشارات الجوع والامتلاء',
+            'Aim for 300-500 calorie deficit daily' => 'استهدف عجز 300-500 سعرة حرارية يومياً',
+            'Consume 1.2-1.6g protein per kg of body weight' => 'تناول 1.2-1.6 جرام بروتين لكل كيلو جرام من وزن الجسم',
+            'Increase vegetable intake for volume' => 'زد من تناول الخضروات للحصول على حجم أكبر',
+            'Stay hydrated' => 'احرص على الترطيب',
+            'Consume 200-300 calorie surplus' => 'استهلك فائض 200-300 سعرة حرارية',
+            'Time protein around workouts' => 'توقيت البروتين حول التمرين',
+            'Include complex carbs' => 'أضف الكربوهيدرات المعقدة',
+            'Stay consistent with 3-5 sessions weekly' => 'كن منتظماً مع 3-5 جلسات أسبوعياً',
+            'Mix different types of exercise' => 'امزج بين أنواع مختلفة من التمارين',
+            'Include flexibility and mobility work' => 'أضف تمارين المرونة والحركة',
+            'Combine strength training with cardio' => 'اجمع بين تدريب القوة والكارديو',
+            'Aim for 10,000+ steps daily' => 'استهدف 10,000+ خطوة يومياً',
+            'Include HIIT workouts 2x/week' => 'أضف تمارين HIIT مرتين أسبوعياً',
+            'Focus on compound movements' => 'ركز على التمارين المركبة',
+            'Progressive overload each week' => 'زود الحمل التدريبي أسبوعياً',
+            'Ensure adequate recovery' => 'احرص على التعافي الكافي',
+            'Balanced breakfast with protein and complex carbs' => 'فطور متوازن مع بروتين وكربوهيدرات معقدة',
+            'Lean protein with vegetables and whole grains' => 'بروتين خالي من الدهون مع خضروات وحبوب كاملة',
+            'Similar to lunch, adjust portion size' => 'مشابه للغداء، عدل حجم الحصة',
+            'Greek yogurt' => 'زبادي يوناني',
+            'Fruit with nuts' => 'فاكهة مع مكسرات',
+            'Vegetable sticks' => 'عصي الخضروات',
+            'Week of' => 'أسبوع',
+            'Recommendation generated successfully' => 'تم إنشاء التوصيات بنجاح',
+            'gemini' => 'جيميني',
+            'openai' => 'أوبن إيه آي',
+            'hardcoded' => 'مدخل يدوياً',
+            'true' => 'نعم',
+            'false' => 'لا',
+            'null' => 'غير محدد',
+        ];
+
+        $arabicData = [];
+
+        foreach ($data as $key => $value) {
+            $arabicKey = $translations[$key] ?? $key;
+
+            if (is_array($value)) {
+                if ($key === 'period' && isset($value['label'])) {
+                    // Translate period label with months
+                    $value['label'] = $this->translateDateLabel($value['label']);
+                }
+                $arabicData[$arabicKey] = $this->translateToArabic($value);
+            } elseif ($value === null) {
+                $arabicData[$arabicKey] = $translations['null'] ?? 'غير محدد';
+            } elseif (is_bool($value)) {
+                $arabicData[$arabicKey] = $value ? ($translations['true'] ?? 'نعم') : ($translations['false'] ?? 'لا');
+            } else {
+                $arabicData[$arabicKey] = $translations[(string)$value] ?? $value;
+            }
+        }
+
+        return $arabicData;
     }
 
     /**
@@ -325,7 +495,7 @@ class AIService implements AIServiceInterface
             'daily_protein_target' => $user->daily_protein_target,
             'daily_carbs_target' => $user->daily_carbs_target,
             'daily_fat_target' => $user->daily_fat_target,
-            'has_complete_profile' => $user->hasCompleteProfile(),
+            'has_complete_profile' => $this->checkCompleteProfile($user),
         ];
     }
 
@@ -419,8 +589,6 @@ class AIService implements AIServiceInterface
     private function calculateAdherenceScore(array $recommendations, array $nutritionSummary): float
     {
         // Simplified adherence calculation
-        // In reality, this would compare previous adherence to new recommendations
-
         $score = 80.0; // Base score
 
         // Adjust based on nutrition consistency
@@ -494,7 +662,7 @@ class AIService implements AIServiceInterface
         return [
             'budget_level' => $budgetLevel,
             'target_range' => $range,
-            'suggestions_within_budget' => true, // Simplified
+            'suggestions_within_budget' => true,
             'cost_saving_tips' => $this->getCostSavingTips($budgetLevel)
         ];
     }
@@ -616,12 +784,41 @@ class AIService implements AIServiceInterface
                         'Get 7-8 hours sleep nightly'
                     ]
                 ]
+            ],
+            'maintain' => [
+                'summary' => 'Focus on maintaining your current fitness level with balanced nutrition.',
+                'recommendations' => [
+                    'nutrition' => [
+                        'Track calories to maintain current weight',
+                        'Balance macronutrients for optimal health',
+                        'Include variety in your diet',
+                        'Listen to hunger and fullness cues'
+                    ],
+                    'training' => [
+                        'Stay consistent with 3-5 sessions weekly',
+                        'Mix different types of exercise',
+                        'Include flexibility and mobility work'
+                    ],
+                    'goals' => [
+                        'Maintain weight within ±1kg',
+                        'Complete 3-4 workouts weekly',
+                        'Get 7+ hours sleep nightly'
+                    ]
+                ]
             ]
         ];
 
-        $plan = $recommendations[$goal] ?? $recommendations['lose_weight'];
+        $plan = $recommendations[$goal] ?? $recommendations['maintain'];
 
         return array_merge($plan, [
+            'summary' => 'Based on your goal to ' . str_replace('_', ' ', $goal),
+            'meal_suggestions' => [
+                'breakfast' => 'Balanced breakfast with protein and complex carbs',
+                'lunch' => 'Lean protein with vegetables and whole grains',
+                'dinner' => 'Similar to lunch, adjust portion size',
+                'snacks' => ['Greek yogurt', 'Fruit with nuts', 'Vegetable sticks']
+            ],
+            'encouragement' => 'Consistency is key! Small daily actions lead to big results.',
             'is_hardcoded' => true,
             'generated_at' => now()->toISOString(),
             'adherence_score' => 85.0,
@@ -711,7 +908,6 @@ class AIService implements AIServiceInterface
             'supplement',
             'fasting',
             'starvation',
-            // Add more as needed
         ];
     }
 
@@ -735,5 +931,165 @@ class AIService implements AIServiceInterface
     {
         $date = date('Y-m-d');
         return "ai_{$type}_{$userId}_{$date}";
+    }
+
+    private function checkCompleteProfile(User $user): bool
+    {
+        return !empty($user->age) &&
+            !empty($user->gender) &&
+            !empty($user->weight) &&
+            !empty($user->height) &&
+            !empty($user->goal);
+    }
+
+    /**
+     * Arabic-specific helper methods
+     */
+    private function translateDateLabel(string $label): string
+    {
+        $monthTranslations = [
+            'Jan' => 'يناير',
+            'Feb' => 'فبراير',
+            'Mar' => 'مارس',
+            'Apr' => 'أبريل',
+            'May' => 'مايو',
+            'Jun' => 'يونيو',
+            'Jul' => 'يوليو',
+            'Aug' => 'أغسطس',
+            'Sep' => 'سبتمبر',
+            'Oct' => 'أكتوبر',
+            'Nov' => 'نوفمبر',
+            'Dec' => 'ديسمبر'
+        ];
+
+        foreach ($monthTranslations as $english => $arabic) {
+            $label = str_replace($english, $arabic, $label);
+        }
+
+        // Replace "Week of" with "أسبوع"
+        $label = str_replace('Week of', 'أسبوع', $label);
+
+        return $label;
+    }
+
+    private function translateMealSuggestionsToArabic(array $suggestions): array
+    {
+        $translations = [
+            'Balanced breakfast with protein and complex carbs' => 'فطور متوازن مع بروتين وكربوهيدرات معقدة',
+            'Lean protein with vegetables and whole grains' => 'بروتين خالي من الدهون مع خضروات وحبوب كاملة',
+            'Similar to lunch, adjust portion size' => 'مشابه للغداء، عدل حجم الحصة',
+            'Greek yogurt' => 'زبادي يوناني',
+            'Fruit with nuts' => 'فاكهة مع مكسرات',
+            'Vegetable sticks' => 'عصي الخضروات',
+            'Balanced Budget Plan' => 'خطة ميزانية متوازنة',
+            'Nutrient-dense meals within your budget' => 'وجبات غنية بالمغذيات ضمن ميزانيتك',
+            'low' => 'منخفض',
+            'medium' => 'متوسط',
+            'high' => 'مرتفع'
+        ];
+
+        return $this->deepTranslate($suggestions, $translations);
+    }
+
+    private function translateTrainingToArabic(array $training): array
+    {
+        $translations = [
+            'Upper Body' => 'الجزء العلوي من الجسم',
+            'Cardio' => 'كارديو',
+            'Lower Body' => 'الجزء السفلي من الجسم',
+            'Active Recovery' => 'استشفاء نشط',
+            'Full Body' => 'الجسم كامل',
+            'Rest' => 'راحة',
+            'Push-ups' => 'تمرين الضغط',
+            'Rows' => 'تمرين السحب',
+            'Shoulder Press' => 'ضغط الكتفين',
+            'Running' => 'الجري',
+            'Cycling' => 'ركوب الدراجات',
+            'Jump Rope' => 'القفز بالحبل',
+            'Squats' => 'القرفصاء',
+            'Lunges' => 'الاندفاع',
+            'Calf Raises' => 'رفع ربلة الساق',
+            'Walking' => 'المشي',
+            'Stretching' => 'تمارين التمدد',
+            'Mobility' => 'الحركة',
+            'Deadlifts' => 'الرفعة المميتة',
+            'Pull-ups' => 'السحب',
+            'Planks' => 'تمرين البلانك',
+            'Swimming' => 'السباحة',
+            'Hiking' => 'المشي لمسافات طويلة',
+            'Sports' => 'الرياضة',
+            'Complete Rest' => 'راحة تامة'
+        ];
+
+        return $this->deepTranslate($training, $translations);
+    }
+
+    private function deepTranslate(array $data, array $translations): array
+    {
+        $translated = [];
+
+        foreach ($data as $key => $value) {
+            $translatedKey = $translations[$key] ?? $key;
+
+            if (is_array($value)) {
+                $translated[$translatedKey] = $this->deepTranslate($value, $translations);
+            } else {
+                $translated[$translatedKey] = $translations[$value] ?? $value;
+            }
+        }
+
+        return $translated;
+    }
+
+    /**
+     * Generate complete Arabic response with proper structure
+     */
+    public function generateCompleteArabicResponse(array $englishData): array
+    {
+        $arabicData = $this->translateToArabic($englishData);
+
+        // Add Arabic-specific metadata
+        $arabicData['language'] = 'ar';
+        $arabicData['direction'] = 'rtl';
+        $arabicData['translated_at'] = now()->toISOString();
+
+        return $arabicData;
+    }
+
+    /**
+     * Test Arabic translation
+     */
+    public function testArabicTranslation(): array
+    {
+        $testData = [
+            'success' => true,
+            'message' => 'Recommendation generated successfully',
+            'data' => [
+                'id' => 'test-123',
+                'period' => [
+                    'label' => 'Week of Jan 5 - Jan 11'
+                ],
+                'summary' => 'Based on your goal to maintain',
+                'recommendations' => [
+                    'nutrition' => [
+                        'Track calories to maintain current weight',
+                        'Balance macronutrients for optimal health'
+                    ],
+                    'training' => [
+                        'Stay consistent with 3-5 sessions weekly',
+                        'Include flexibility and mobility work'
+                    ]
+                ],
+                'meal_suggestions' => [
+                    'breakfast' => 'Balanced breakfast with protein and complex carbs',
+                    'lunch' => 'Lean protein with vegetables and whole grains'
+                ]
+            ]
+        ];
+
+        return [
+            'english' => $testData,
+            'arabic' => $this->translateToArabic($testData)
+        ];
     }
 }

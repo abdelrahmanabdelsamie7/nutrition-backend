@@ -3,8 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\BaseController;
-use App\Http\Requests\FoodLog\StoreFoodLogRequest;
-use App\Http\Requests\FoodLog\StoreVoiceLogRequest;
+use App\Http\Requests\FoodLog\{StoreFoodLogRequest, StoreVoiceLogRequest};
 use App\Http\Resources\FoodLogResource;
 use App\Interfaces\Services\NutritionServiceInterface;
 use App\Interfaces\Repositories\FoodLogRepositoryInterface;

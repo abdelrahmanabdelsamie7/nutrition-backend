@@ -2,185 +2,76 @@
 
 namespace App\Services\External;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\RequestException;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
-use App\Exceptions\ExternalServiceException;
-use Exception;
 
 class CalorieNinjasService
 {
-    private Client $client;
     private string $apiKey;
-    private string $baseUrl;
-    private int $timeout;
+    private string $apiUrl;
 
     public function __construct()
     {
         $this->apiKey = config('services.calorie_ninjas.api_key');
-        $this->baseUrl = config('services.calorie_ninjas.base_url', 'https://api.calorieninjas.com/v1/');
-        $this->timeout = config('services.calorie_ninjas.timeout', 10);
+        $this->apiUrl = 'https://api.calorieninjas.com/v1/nutrition';
 
-        $this->client = new Client([
-            'base_uri' => $this->baseUrl,
-            'timeout' => $this->timeout,
-            'headers' => [
-                'X-Api-Key' => $this->apiKey,
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/json',
-            ],
-            'verify' => false, // Temporarily for debugging
-            'http_errors' => false,
-        ]);
+        if (empty($this->apiKey)) {
+            throw new \Exception('CalorieNinjas API key is not configured');
+        }
     }
 
-    /**
-     * Get nutrition data for food query
-     */
     public function getNutritionData(string $query): array
     {
-        // Clean and validate query
-        $cleanQuery = $this->cleanFoodQuery($query);
-
-        if (empty($cleanQuery)) {
-            Log::warning('Empty query after cleaning', ['original' => $query]);
-            return $this->getFallbackNutritionData($query);
-        }
-
-        $cacheKey = $this->generateCacheKey($cleanQuery);
-
-        // Check cache first
+        $cacheKey = 'calorie_ninjas:' . md5($query);
         if (Cache::has($cacheKey)) {
-            Log::info('Cache hit for food query', ['query' => $cleanQuery]);
             return Cache::get($cacheKey);
         }
-
         try {
-            Log::info('Calling CalorieNinjas API', [
-                'query' => $cleanQuery,
-                'api_key_exists' => !empty($this->apiKey),
-                'api_key_first_chars' => substr($this->apiKey, 0, 5) . '...'
-            ]);
+            $response = $this->makeApiRequest($query);
 
-            // Make GET request
-            $response = $this->client->get('nutrition', [
-                'query' => ['query' => $cleanQuery],
-            ]);
+            Cache::put($cacheKey, $response, now()->addHours(24));
 
-            $statusCode = $response->getStatusCode();
-            $responseBody = $response->getBody()->getContents();
-
-            Log::debug('CalorieNinjas Raw Response', [
-                'status' => $statusCode,
-                'headers' => $response->getHeaders(),
-                'body_preview' => substr($responseBody, 0, 500)
-            ]);
-
-            // Parse JSON response
-            $body = json_decode($responseBody, true);
-
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::error('Invalid JSON response from CalorieNinjas', [
-                    'json_error' => json_last_error_msg(),
-                    'raw_response' => $responseBody,
-                    'query' => $cleanQuery
-                ]);
-
-                return $this->getFallbackNutritionData($cleanQuery);
-            }
-
-            Log::info('CalorieNinjas API Response', [
-                'status' => $statusCode,
-                'query' => $cleanQuery,
-                'response_keys' => is_array($body) ? array_keys($body) : 'not_an_array',
-                'has_items' => isset($body['items']) && is_array($body['items'])
-            ]);
-
-            if ($statusCode !== 200) {
-                Log::error('CalorieNinjas API error', [
-                    'status' => $statusCode,
-                    'body' => $body,
-                    'query' => $cleanQuery
-                ]);
-
-                throw new Exception(
-                    "CalorieNinjas API error: {$statusCode}",
-                    $statusCode,
-                    $body
-                );
-            }
-
-            if (!isset($body['items']) || !is_array($body['items']) || empty($body['items'])) {
-                Log::warning('No nutrition data found for query', [
-                    'query' => $cleanQuery,
-                    'response' => $body
-                ]);
-
-                return $this->getFallbackNutritionData($cleanQuery);
-            }
-
-            $normalizedData = $this->normalizeResponse($body['items'], $cleanQuery);
-
-            // Cache for 24 hours
-            Cache::put($cacheKey, $normalizedData, now()->addHours(24));
-
-            Log::info('Nutrition data retrieved successfully', [
-                'query' => $cleanQuery,
-                'calories' => $normalizedData['calories'],
-                'items_count' => count($body['items'])
-            ]);
-
-            return $normalizedData;
-        } catch (RequestException $e) {
-            Log::error('CalorieNinjas API request failed', [
-                'query' => $cleanQuery,
-                'error' => $e->getMessage(),
-                'code' => $e->getCode(),
-                'request' => $e->hasResponse() ? $e->getResponse()->getBody()->getContents() : 'No response'
-            ]);
-
-            return $this->getFallbackNutritionData($cleanQuery);
+            return $response;
         } catch (\Exception $e) {
-            Log::error('Unexpected error in CalorieNinjas service', [
-                'query' => $cleanQuery,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return $this->getFallbackNutritionData($cleanQuery);
+            return $this->getSmartFallback($query);
         }
     }
 
-    /**
-     * Clean food query
-     */
-    private function cleanFoodQuery(string $query): string
+    private function makeApiRequest(string $query): array
     {
-        if (empty($query)) {
-            return 'apple';
+
+        $response = Http::timeout(15)
+            ->retry(3, 1000)
+            ->withHeaders([
+                'X-Api-Key' => $this->apiKey,
+                'Accept' => 'application/json',
+            ])
+            ->get($this->apiUrl, ['query' => $query]);
+
+        if ($response->successful()) {
+            $data = $response->json();
+
+            return $this->normalizeResponse($data, $query);
         }
 
-        // Remove extra spaces
-        $query = trim(preg_replace('/\s+/', ' ', $query));
+        $statusCode = $response->status();
+        $body = $response->body();
 
-        // Keep only safe characters
-        $query = preg_replace('/[^\w\s\d.,%]/u', '', $query);
-
-        // Limit to 1500 characters (API limit)
-        if (strlen($query) > 1500) {
-            $query = substr($query, 0, 1500);
+        if ($statusCode === 401 || str_contains($body, 'Invalid API Key')) {
+            throw new \Exception('Invalid CalorieNinjas API Key. Please check your configuration.');
         }
 
-        return $query;
+        if ($statusCode === 429) {
+            throw new \Exception('Rate limit exceeded. Please try again later.');
+        }
+
+        throw new \Exception("API Error {$statusCode}: {$body}");
     }
 
-    /**
-     * Normalize API response
-     */
-    private function normalizeResponse(array $items, string $originalQuery): array
+    private function normalizeResponse(array $data, string $query): array
     {
-        $total = [
+        $items = $data['items'] ?? [];
+        $totals = [
             'calories' => 0,
             'protein' => 0,
             'carbs' => 0,
@@ -189,27 +80,20 @@ class CalorieNinjasService
             'sugar' => 0,
             'sodium' => 0,
             'serving_size_g' => 0,
-            'items' => [],
-            'query' => $originalQuery,
-            'items_count' => count($items),
-            'source' => 'calorieninjas',
+            'items' => []
         ];
 
         foreach ($items as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
+            $totals['calories'] += $item['calories'] ?? 0;
+            $totals['protein'] += $item['protein_g'] ?? 0;
+            $totals['carbs'] += $item['carbohydrates_total_g'] ?? 0;
+            $totals['fat'] += $item['fat_total_g'] ?? 0;
+            $totals['fiber'] += $item['fiber_g'] ?? 0;
+            $totals['sugar'] += $item['sugar_g'] ?? 0;
+            $totals['sodium'] += $item['sodium_mg'] ?? 0;
+            $totals['serving_size_g'] += $item['serving_size_g'] ?? 0;
 
-            $total['calories'] += $item['calories'] ?? 0;
-            $total['protein'] += $item['protein_g'] ?? 0;
-            $total['carbs'] += $item['carbohydrates_total_g'] ?? 0;
-            $total['fat'] += $item['fat_total_g'] ?? 0;
-            $total['fiber'] += $item['fiber_g'] ?? 0;
-            $total['sugar'] += $item['sugar_g'] ?? 0;
-            $total['sodium'] += $item['sodium_mg'] ?? 0;
-            $total['serving_size_g'] += $item['serving_size_g'] ?? 0;
-
-            $total['items'][] = [
+            $totals['items'][] = [
                 'name' => $item['name'] ?? 'Unknown',
                 'calories' => $item['calories'] ?? 0,
                 'protein_g' => $item['protein_g'] ?? 0,
@@ -219,85 +103,97 @@ class CalorieNinjasService
             ];
         }
 
-        // Round values
-        $total['calories'] = round($total['calories'], 2);
-        $total['protein'] = round($total['protein'], 2);
-        $total['carbs'] = round($total['carbs'], 2);
-        $total['fat'] = round($total['fat'], 2);
-        $total['fiber'] = round($total['fiber'], 2);
-        $total['sugar'] = round($total['sugar'], 2);
-        $total['sodium'] = round($total['sodium'], 2);
-
-        return $total;
+        return array_merge($totals, [
+            'is_fallback' => false,
+            'matched_food' => count($items) > 0 ? ($items[0]['name'] ?? 'unknown') : 'unknown',
+            'quantity_multiplier' => 1,
+            'source' => 'calorieninjas',
+            'original_query' => $query,
+            'items_count' => count($items)
+        ]);
     }
 
-    /**
-     * Fallback nutrition data
-     */
-    private function getFallbackNutritionData(string $query): array
+    private function getSmartFallback(string $query): array
     {
-        Log::warning('Using fallback nutrition data', ['query' => $query]);
+        preg_match('/(\d+(?:\.\d+)?)/', $query, $matches);
+        $quantity = $matches[1] ?? 1;
 
-        // Parse quantity from query
-        $quantity = 1;
-        if (preg_match('/(\d+)/', strtolower($query), $matches)) {
-            $quantity = (int)$matches[1];
-        }
-
-        // Common foods database (per 100g)
         $foodDatabase = [
-            'banana' => ['calories' => 89, 'protein' => 1.1, 'carbs' => 23, 'fat' => 0.3],
-            'apple' => ['calories' => 52, 'protein' => 0.3, 'carbs' => 14, 'fat' => 0.2],
-            'egg' => ['calories' => 155, 'protein' => 13, 'carbs' => 1.1, 'fat' => 11],
-            'eggs' => ['calories' => 155, 'protein' => 13, 'carbs' => 1.1, 'fat' => 11],
-            'bread' => ['calories' => 265, 'protein' => 9, 'carbs' => 49, 'fat' => 3.2],
-            'rice' => ['calories' => 130, 'protein' => 2.7, 'carbs' => 28, 'fat' => 0.3],
-            'chicken' => ['calories' => 239, 'protein' => 27, 'carbs' => 0, 'fat' => 14],
-            'milk' => ['calories' => 42, 'protein' => 3.4, 'carbs' => 5, 'fat' => 1],
-            'cheese' => ['calories' => 402, 'protein' => 25, 'carbs' => 1.3, 'fat' => 33],
-            'pasta' => ['calories' => 131, 'protein' => 5, 'carbs' => 25, 'fat' => 1],
-            'beef' => ['calories' => 250, 'protein' => 26, 'carbs' => 0, 'fat' => 17],
-            'fish' => ['calories' => 206, 'protein' => 22, 'carbs' => 0, 'fat' => 13],
-            'potato' => ['calories' => 77, 'protein' => 2, 'carbs' => 17, 'fat' => 0.1],
-            'tomato' => ['calories' => 18, 'protein' => 0.9, 'carbs' => 3.9, 'fat' => 0.2],
-            'salad' => ['calories' => 15, 'protein' => 1.3, 'carbs' => 2.9, 'fat' => 0.2],
-            'yogurt' => ['calories' => 59, 'protein' => 10, 'carbs' => 3.6, 'fat' => 0.4],
+            'خيار' => ['en' => 'cucumber', 'calories' => 15, 'protein' => 0.7, 'carbs' => 3.6, 'fat' => 0.1],
+            'cucumber' => ['en' => 'cucumber', 'calories' => 15, 'protein' => 0.7, 'carbs' => 3.6, 'fat' => 0.1],
+
+            'تفاح' => ['en' => 'apple', 'calories' => 52, 'protein' => 0.3, 'carbs' => 14, 'fat' => 0.2],
+            'apple' => ['en' => 'apple', 'calories' => 52, 'protein' => 0.3, 'carbs' => 14, 'fat' => 0.2],
+
+            'موز' => ['en' => 'banana', 'calories' => 89, 'protein' => 1.1, 'carbs' => 23, 'fat' => 0.3],
+            'banana' => ['en' => 'banana', 'calories' => 89, 'protein' => 1.1, 'carbs' => 23, 'fat' => 0.3],
+
+            'برتقال' => ['en' => 'orange', 'calories' => 47, 'protein' => 0.9, 'carbs' => 12, 'fat' => 0.1],
+            'orange' => ['en' => 'orange', 'calories' => 47, 'protein' => 0.9, 'carbs' => 12, 'fat' => 0.1],
+
+            'جزر' => ['en' => 'carrot', 'calories' => 41, 'protein' => 0.9, 'carbs' => 10, 'fat' => 0.2],
+            'carrot' => ['en' => 'carrot', 'calories' => 41, 'protein' => 0.9, 'carbs' => 10, 'fat' => 0.2],
+
+            'طماطم' => ['en' => 'tomato', 'calories' => 18, 'protein' => 0.9, 'carbs' => 3.9, 'fat' => 0.2],
+            'tomato' => ['en' => 'tomato', 'calories' => 18, 'protein' => 0.9, 'carbs' => 3.9, 'fat' => 0.2],
+
+            'دجاج' => ['en' => 'chicken', 'calories' => 239, 'protein' => 27, 'carbs' => 0, 'fat' => 14],
+            'chicken' => ['en' => 'chicken', 'calories' => 239, 'protein' => 27, 'carbs' => 0, 'fat' => 14],
+
+            'أرز' => ['en' => 'rice', 'calories' => 130, 'protein' => 2.7, 'carbs' => 28, 'fat' => 0.3],
+            'rice' => ['en' => 'rice', 'calories' => 130, 'protein' => 2.7, 'carbs' => 28, 'fat' => 0.3],
+
+            'خبز' => ['en' => 'bread', 'calories' => 265, 'protein' => 9, 'carbs' => 49, 'fat' => 3.2],
+            'bread' => ['en' => 'bread', 'calories' => 265, 'protein' => 9, 'carbs' => 49, 'fat' => 3.2],
         ];
 
         $queryLower = strtolower($query);
         $matchedFood = null;
+        $foodData = null;
 
-        foreach ($foodDatabase as $food => $nutrition) {
-            if (str_contains($queryLower, $food)) {
-                $matchedFood = $food;
+        foreach ($foodDatabase as $key => $data) {
+            if (str_contains($queryLower, strtolower($key))) {
+                $matchedFood = $data['en'];
+                $foodData = $data;
                 break;
             }
         }
 
-        if ($matchedFood) {
-            $nutrition = $foodDatabase[$matchedFood];
-            return [
-                'calories' => round($nutrition['calories'] * $quantity, 2),
-                'protein' => round($nutrition['protein'] * $quantity, 2),
-                'carbs' => round($nutrition['carbs'] * $quantity, 2),
-                'fat' => round($nutrition['fat'] * $quantity, 2),
+        if ($matchedFood && $foodData) {
+            $result = [
+                'calories' => round($foodData['calories'] * $quantity, 2),
+                'protein' => round($foodData['protein'] * $quantity, 2),
+                'carbs' => round($foodData['carbs'] * $quantity, 2),
+                'fat' => round($foodData['fat'] * $quantity, 2),
                 'fiber' => 0,
                 'sugar' => 0,
                 'sodium' => 0,
                 'serving_size_g' => 100 * $quantity,
-                'items' => [],
+                'items' => [
+                    [
+                        'name' => $matchedFood,
+                        'calories' => $foodData['calories'] * $quantity,
+                        'protein_g' => $foodData['protein'] * $quantity,
+                        'carbs_g' => $foodData['carbs'] * $quantity,
+                        'fat_g' => $foodData['fat'] * $quantity,
+                        'serving_size_g' => 100 * $quantity,
+                    ]
+                ],
                 'is_fallback' => true,
                 'matched_food' => $matchedFood,
                 'quantity_multiplier' => $quantity,
-                'source' => 'fallback_database',
+                'source' => 'smart_fallback',
+                'original_query' => $query,
+                'items_count' => 1,
+                'note' => 'Used local nutrition database'
             ];
+            return $result;
         }
 
-        // Default fallback
         return [
             'calories' => round(200 * $quantity, 2),
             'protein' => round(15 * $quantity, 2),
-            'carbs' => round(20 * $quantity, 2),
+            'carbs' => round(25 * $quantity, 2),
             'fat' => round(10 * $quantity, 2),
             'fiber' => 0,
             'sugar' => 0,
@@ -308,59 +204,132 @@ class CalorieNinjasService
             'matched_food' => 'unknown',
             'quantity_multiplier' => $quantity,
             'source' => 'default_fallback',
+            'original_query' => $query,
+            'items_count' => 0,
         ];
     }
 
-    /**
-     * Test API connection directly
-     */
-    public function testConnection(): array
+    public function parseFoodItem(string $text): array
     {
-        try {
-            $testQuery = '100g banana';
-            $url = $this->baseUrl . 'nutrition?query=' . urlencode($testQuery);
+        $text = trim($text);
 
-            Log::info('Testing API connection', [
-                'url' => $url,
-                'api_key_exists' => !empty($this->apiKey),
-                'api_key_preview' => !empty($this->apiKey) ? substr($this->apiKey, 0, 8) . '...' : 'missing'
-            ]);
+        $patterns = [
+            '/^(?<quantity>\d+(?:\.\d+)?)\s*(?<unit>\w+)?\s*(?<food>.+)$/i',
 
-            $response = $this->client->get('nutrition', [
-                'query' => ['query' => $testQuery],
-                'timeout' => 5,
-            ]);
+            '/^(?<amount>\d+(?:\.\d+)?)\s*(?<unit>g|kg|ml|l|oz|lb|cup|cups|tbsp|tsp|piece|pieces|slice|slices|medium|large|small)\s*(?<food>.+)$/i',
 
-            $statusCode = $response->getStatusCode();
-            $responseBody = $response->getBody()->getContents();
-            $body = json_decode($responseBody, true);
+            '/^(?<food>.+)$/i'
+        ];
 
-            return [
-                'status' => 'connected',
-                'status_code' => $statusCode,
-                'test_query' => $testQuery,
-                'response_valid_json' => json_last_error() === JSON_ERROR_NONE,
-                'has_items' => isset($body['items']) && is_array($body['items']),
-                'items_count' => isset($body['items']) ? count($body['items']) : 0,
-                'response_sample' => isset($body['items'][0]) ? $body['items'][0] : null,
-                'message' => 'API is responding normally'
-            ];
-        } catch (\Exception $e) {
-            return [
-                'status' => 'disconnected',
-                'error' => $e->getMessage(),
-                'api_key_set' => !empty($this->apiKey),
-                'message' => 'API connection failed'
-            ];
+        $defaultUnitMap = [
+            'g' => 'grams',
+            'kg' => 'kilograms',
+            'ml' => 'milliliters',
+            'l' => 'liters',
+            'oz' => 'ounces',
+            'lb' => 'pounds',
+            'cup' => 'cups',
+            'cups' => 'cups',
+            'tbsp' => 'tablespoons',
+            'tsp' => 'teaspoons',
+            'piece' => 'pieces',
+            'pieces' => 'pieces',
+            'slice' => 'slices',
+            'slices' => 'slices',
+            'medium' => 'medium',
+            'large' => 'large',
+            'small' => 'small'
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text, $matches)) {
+                $matches = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+
+                $quantity = 1;
+                $unit = null;
+
+                if (isset($matches['quantity'])) {
+                    $quantity = (float) $matches['quantity'];
+                    $unit = $matches['unit'] ?? null;
+                } elseif (isset($matches['amount'])) {
+                    $quantity = (float) $matches['amount'];
+                    $unit = $matches['unit'] ?? null;
+                }
+
+                if ($unit && isset($defaultUnitMap[strtolower($unit)])) {
+                    $unit = $defaultUnitMap[strtolower($unit)];
+                }
+
+                $food = trim($matches['food'] ?? $text);
+
+                $nutrition = $this->getNutritionData($food);
+
+                $parsedItem = [
+                    'original_text' => $text,
+                    'food' => $food,
+                    'quantity' => $quantity,
+                    'unit' => $unit,
+                    'parsed_correctly' => true,
+                    'nutrition' => [
+                        'calories' => $nutrition['calories'] * $quantity,
+                        'protein' => $nutrition['protein'] * $quantity,
+                        'carbs' => $nutrition['carbs'] * $quantity,
+                        'fat' => $nutrition['fat'] * $quantity,
+                    ],
+                    'details' => [
+                        'is_fallback' => $nutrition['is_fallback'] ?? false,
+                        'matched_food' => $nutrition['matched_food'] ?? 'unknown',
+                        'source' => $nutrition['source'] ?? 'unknown',
+                    ]
+                ];
+
+                return $parsedItem;
+            }
         }
+
+        return [
+            'original_text' => $text,
+            'food' => $text,
+            'quantity' => 1,
+            'unit' => null,
+            'parsed_correctly' => false,
+            'nutrition' => $this->getNutritionData($text),
+            'details' => ['note' => 'Could not parse item format']
+        ];
     }
 
-    /**
-     * Generate cache key
-     */
-    private function generateCacheKey(string $query): string
+    public function parseFoodItems(string $text): array
     {
-        $normalized = strtolower(trim($query));
-        return 'calorieninjas:' . md5($normalized);
+        $text = trim($text);
+
+        $separators = ['،', ',', 'و', 'and', 'with', '+', 'then', 'ثم'];
+        $separatorPattern = '/\s*(?:' . implode('|', array_map('preg_quote', $separators)) . ')\s*/iu';
+
+        $segments = preg_split($separatorPattern, $text);
+        $items = [];
+
+        foreach ($segments as $segment) {
+            $segment = trim($segment);
+
+            if (!empty($segment)) {
+                try {
+                    $parsedItem = $this->parseFoodItem($segment);
+                    $items[] = $parsedItem;
+                } catch (\Exception $e) {
+                    $items[] = [
+                        'original_text' => $segment,
+                        'food' => $segment,
+                        'quantity' => 1,
+                        'unit' => null,
+                        'parsed_correctly' => false,
+                        'nutrition' => $this->getNutritionData($segment),
+                        'details' => ['error' => 'Parsing failed']
+                    ];
+                }
+            }
+        }
+
+        return $items;
     }
+
 }

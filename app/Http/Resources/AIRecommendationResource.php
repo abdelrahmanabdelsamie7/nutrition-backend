@@ -15,7 +15,7 @@ class AIRecommendationResource extends JsonResource
             'period' => [
                 'start' => $this->period_start,
                 'end' => $this->period_end,
-                'type' => $this->getTranslatedEnum('period_type', $this->period_types),
+                'type' => $this->getTranslateEnum('period_type', $this->period_types),
                 'label' => $this->getPeriodLabel(),
             ],
 
@@ -40,7 +40,7 @@ class AIRecommendationResource extends JsonResource
             'updated_at' => $this->updated_at,
         ];
     }
-    private function getTranslatedEnum(string $type, ?string $value): ?string
+    private function getTranslateEnum(string $type, ?string $value): ?string
     {
         if (is_null($value)) {
             return null;

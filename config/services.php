@@ -36,4 +36,10 @@ return [
         'timeout' => 10,
     ],
 
+    'translation' => [
+        'fallback_dictionary' => true,
+        'use_google_translate' => true,
+        'cache_translations' => true,
+        'cache_ttl' => 86400,
+    ],
 ];

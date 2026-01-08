@@ -20,7 +20,7 @@ class StoreTrainingLogRequest extends FormRequest
             "intensity_level" => "nullable|numeric|min:1|max:10",
             "reps" => "nullable|integer|min:1",
             "sets" => "nullable|integer|min:1",
-            "weight_used" => "nullable|numeric|min:0.1",
+            "weight_used" => "nullable|min:0",
             "distance" => "nullable|numeric|min:0.1",
             "heart_rate_avg" => "nullable|integer|min:40|max:220",
             "notes" => "nullable|string|max:1000",

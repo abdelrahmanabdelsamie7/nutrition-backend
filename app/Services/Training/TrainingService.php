@@ -2,67 +2,53 @@
 
 namespace App\Services\Training;
 
-use App\Interfaces\Services\TrainingServiceInterface;
-use App\Interfaces\Repositories\TrainingLogRepositoryInterface;
-use App\Interfaces\Repositories\UserRepositoryInterface;
 use Illuminate\Support\Facades\Log;
+use App\Traits\TrainingPlanTemplatesTrait;
+use App\Interfaces\Services\TrainingServiceInterface;
+use App\Interfaces\Repositories\UserRepositoryInterface;
+use App\Traits\Translations\TranslationTraingingPlansTrait;
+use App\Interfaces\Repositories\TrainingLogRepositoryInterface;
 
 class TrainingService implements TrainingServiceInterface
 {
+    use TrainingPlanTemplatesTrait, TranslationTraingingPlansTrait;
     public function __construct(
         private TrainingLogRepositoryInterface $trainingRepository,
         private UserRepositoryInterface $userRepository
     ) {}
 
-    /**
-     * Calculate calories burned for an activity
-     */
-    public function calculateCaloriesBurned(
-        string $activity,
-        int $duration,
-        float $weight,
-        float $intensity = 5.0
-    ): float {
-        $metValue = $this->getActivityMET($activity);
-
-        // Adjust MET based on intensity (1-10 scale)
-        $intensityMultiplier = 1 + (($intensity - 5) * 0.1);
-        $adjustedMET = $metValue * $intensityMultiplier;
-
-        // Calories = MET * weight(kg) * time(hours)
-        $hours = $duration / 60;
-        $calories = $adjustedMET * $weight * $hours;
-
-        return round(max($calories, 0), 1);
-    }
-
-    /**
-     * Log training session
-     */
     public function logTrainingSession(string $userId, array $data): array
     {
         $user = $this->userRepository->find($userId);
 
-        // Calculate calories burned
+        $originalActivity = $data['activity_name'];
+        $translatedActivity = $this->translateActivityToEnglish($originalActivity);
+
+        $userWeight = $this->getUserWeightWithFallback($user);
+
         $caloriesBurned = $this->calculateCaloriesBurned(
-            $data['activity_name'],
+            $translatedActivity,
             $data['duration'],
-            $user->weight,
+            $userWeight,
             $data['intensity_level'] ?? 5.0
         );
 
         $trainingData = [
             'user_id' => $userId,
-            'activity_name' => $data['activity_name'],
-            'activity_type' => $data['activity_type'] ?? $this->classifyActivity($data['activity_name']),
+            'activity_name' => $originalActivity,
+            'activity_name_en' => $translatedActivity,
+            'activity_type' => $data['activity_type'] ?? $this->classifyActivity($translatedActivity),
             'duration' => $data['duration'],
             'intensity_level' => $data['intensity_level'] ?? 5.0,
             'estimated_calories_burned' => $caloriesBurned,
             'calorie_calculation_meta' => [
                 'method' => 'MET',
-                'weight_used' => $user->weight,
+                'weight_used' => $userWeight,
                 'intensity' => $data['intensity_level'] ?? 5.0,
-                'calculated_at' => now()->toISOString()
+                'calculated_at' => now()->toISOString(),
+                'original_activity' => $originalActivity,
+                'translated_activity' => $translatedActivity,
+                'weight_source' => $user->weight ? 'user_profile' : 'default_fallback'
             ],
             'reps' => $data['reps'] ?? null,
             'sets' => $data['sets'] ?? null,
@@ -75,13 +61,6 @@ class TrainingService implements TrainingServiceInterface
 
         $log = $this->trainingRepository->create($trainingData);
 
-        Log::info('Training session logged', [
-            'user_id' => $userId,
-            'activity' => $data['activity_name'],
-            'calories_burned' => $caloriesBurned,
-            'duration' => $data['duration']
-        ]);
-
         return [
             'log' => $log,
             'calories_burned' => $caloriesBurned,
@@ -89,17 +68,50 @@ class TrainingService implements TrainingServiceInterface
         ];
     }
 
-    /**
-     * Get training recommendations
-     */
+
+    private function getUserWeightWithFallback($user): float
+    {
+        if (isset($user->weight) && is_numeric($user->weight) && $user->weight > 0) {
+            return (float) $user->weight;
+        }
+
+        $defaultWeight = 70.0;
+
+        if (isset($user->gender) && strtolower($user->gender) === 'female') {
+            $defaultWeight = 60.0;
+        }
+
+        return $defaultWeight;
+    }
+
+    public function calculateCaloriesBurned(
+        string $activity,
+        int $duration,
+        ?float $weight = null,
+        float $intensity = 5.0
+    ): float {
+        $activity = $this->translateActivityToEnglish($activity);
+
+        $metValue = $this->getActivityMET($activity);
+
+        $intensityMultiplier = 1 + (($intensity - 5) * 0.1);
+        $adjustedMET = $metValue * $intensityMultiplier;
+
+        $safeWeight = $weight ?? 70.0;
+
+        $hours = $duration / 60;
+        $calories = $adjustedMET * $safeWeight * $hours;
+
+        return round(max($calories, 0), 1);
+    }
+
+
     public function getTrainingRecommendations(string $userId, array $goals): array
     {
         $user = $this->userRepository->find($userId);
         $trainingHistory = $this->trainingRepository->getUserLogs($userId);
-
         $recommendations = [];
 
-        // Based on user goal
         switch ($user->goal) {
             case 'lose_weight':
                 $recommendations = $this->getWeightLossRecommendations($user, $trainingHistory);
@@ -110,22 +122,115 @@ class TrainingService implements TrainingServiceInterface
             case 'gain_weight':
                 $recommendations = $this->getWeightGainRecommendations($user, $trainingHistory);
                 break;
+            case 'maintain':
             default:
                 $recommendations = $this->getMaintenanceRecommendations($user, $trainingHistory);
         }
 
-        // Adjust based on activity level
         $recommendations = $this->adjustForActivityLevel($recommendations, $user->activity_level);
 
-        // Add consistency tips
         $recommendations['consistency_tips'] = $this->getConsistencyTips($trainingHistory);
+
+        if ($user->language === 'ar' || $user->language === 'arabic') {
+            $recommendations = $this->translateRecommendationsToArabic($recommendations);
+        }
 
         return $recommendations;
     }
 
-    /**
-     * Calculate training volume
-     */
+
+    private function getWeightGainRecommendations($user, $trainingHistory): array
+    {
+        $recommendations = [
+            'goal' => 'زيادة الوزن والعضلات',
+            'frequency' => '4-5 days per week',
+            'split' => 'Focus on strength training with minimal cardio',
+            'strength_training' => [
+                'focus' => 'Compound movements with progressive overload',
+                'frequency' => '3-4 times per week',
+                'volume' => '3-4 sets of 6-8 reps',
+                'intensity' => 'High intensity (RPE 8-9)',
+                'rest_periods' => '2-3 minutes between sets'
+            ],
+            'cardio' => [
+                'type' => 'Minimal low-intensity cardio',
+                'duration' => '15-20 minutes per session, 1-2 times per week',
+                'purpose' => 'Maintain cardiovascular health without excessive calorie burn'
+            ],
+            'nutrition_focus' => [
+                'calorie_surplus' => '300-500 calories above maintenance',
+                'protein_intake' => '1.6-2.2g per kg of body weight',
+                'carbohydrates' => 'High carb intake for energy and recovery',
+                'meal_frequency' => '5-6 meals per day'
+            ],
+            'progression' => 'Increase weight by 2.5-5% when you can complete all reps with good form',
+            'recovery' => '48-72 hours between training same muscle groups, prioritize sleep (7-9 hours)',
+            'supplementation' => [
+                'recommended' => ['Protein powder', 'Creatine monohydrate', 'Mass gainers if needed'],
+                'optional' => ['BCAAs', 'Beta-alanine']
+            ]
+        ];
+
+        // Personalize based on user data
+        if ($user->gender === 'female') {
+            $recommendations['notes'][] = 'Women may need slightly lower calorie surplus (200-300 calories)';
+        }
+
+        if ($user->activity_level === 'sedentary') {
+            $recommendations['cardio']['frequency'] = '1 time per week';
+        }
+
+        return $recommendations;
+    }
+
+    private function getMaintenanceRecommendations($user, $trainingHistory): array
+    {
+        $recommendations = [
+            'goal' => 'الحفاظ على اللياقة والوزن الحالي',
+            'frequency' => '3-4 days per week',
+            'split' => 'Balanced full-body workouts',
+            'workout_structure' => [
+                'strength' => '2 times per week',
+                'cardio' => '1-2 times per week',
+                'flexibility' => '1 time per week'
+            ],
+            'strength_training' => [
+                'focus' => 'Maintain strength and muscle mass',
+                'volume' => '2-3 sets of 8-12 reps',
+                'intensity' => 'Moderate intensity (RPE 6-8)',
+                'exercises' => 'Focus on compound movements with accessory work'
+            ],
+            'cardio' => [
+                'type' => 'Mix of steady state and intervals',
+                'duration' => '30-45 minutes per session',
+                'weekly_total' => '75-150 minutes'
+            ],
+            'flexibility_mobility' => [
+                'frequency' => '1-2 times per week',
+                'activities' => ['Yoga', 'Stretching', 'Foam rolling'],
+                'duration' => '20-30 minutes per session'
+            ],
+            'nutrition_focus' => [
+                'calories' => 'Maintenance level',
+                'protein_intake' => '1.2-1.6g per kg of body weight',
+                'macronutrient_balance' => 'Balanced diet with whole foods'
+            ],
+            'progression' => 'Maintain current strength levels, focus on technique and consistency',
+            'recovery' => '48 hours between strength sessions, active recovery on off days',
+            'periodization' => 'Change exercises every 4-6 weeks to prevent plateaus'
+        ];
+
+        if (count($trainingHistory) > 10) {
+            $recommendations['advanced_options'] = [
+                'deload_weeks' => 'Take a deload week every 8-12 weeks',
+                'skill_work' => 'Incorporate skill-based training or new activities'
+            ];
+        }
+
+        return $recommendations;
+    }
+
+
     public function calculateTrainingVolume(array $sessions): array
     {
         $volume = [
@@ -161,7 +266,6 @@ class TrainingService implements TrainingServiceInterface
             $weeklyData[$week]['duration'] += $session['duration'];
             $weeklyData[$week]['calories'] += $session['estimated_calories_burned'];
 
-            // Intensity classification
             $intensity = $session['intensity_level'] ?? 5;
             if ($intensity <= 3) $intensityCounts['light']++;
             elseif ($intensity <= 6) $intensityCounts['moderate']++;
@@ -169,7 +273,6 @@ class TrainingService implements TrainingServiceInterface
             else $intensityCounts['maximum']++;
         }
 
-        // Calculate weekly averages
         if (!empty($weeklyData)) {
             $totalWeeks = count($weeklyData);
             $volume['weekly_average'] = [
@@ -179,7 +282,6 @@ class TrainingService implements TrainingServiceInterface
             ];
         }
 
-        // Calculate intensity distribution
         $totalSessions = $volume['total_sessions'];
         if ($totalSessions > 0) {
             foreach ($intensityCounts as $key => $count) {
@@ -193,11 +295,10 @@ class TrainingService implements TrainingServiceInterface
         return $volume;
     }
 
-    /**
-     * Get activity MET values
-     */
     public function getActivityMET(string $activity): float
     {
+        $activity = $this->translateActivityToEnglish($activity);
+
         $metValues = [
             // Cardio
             'running' => 9.8,
@@ -207,12 +308,16 @@ class TrainingService implements TrainingServiceInterface
             'swimming' => 8.0,
             'rowing' => 7.0,
             'jump rope' => 10.0,
+            'brisk walking' => 5.0,
 
             // Strength
             'weight lifting' => 6.0,
             'bodyweight exercises' => 5.0,
             'calisthenics' => 5.5,
             'circuit training' => 8.0,
+            'push ups' => 4.0,
+            'pull ups' => 4.5,
+            'squats' => 5.0,
 
             // Sports
             'basketball' => 8.0,
@@ -226,23 +331,28 @@ class TrainingService implements TrainingServiceInterface
             'stretching' => 2.5,
             'dancing' => 5.0,
             'hiking' => 6.0,
+            'gym' => 5.0,
+            'exercise' => 5.0,
         ];
 
         $activityLower = strtolower($activity);
 
         foreach ($metValues as $key => $value) {
-            if (strpos($activityLower, $key) !== false) {
+            if (str_contains($activityLower, $key)) {
+                Log::debug('Found MET value for activity', [
+                    'activity' => $activity,
+                    'met' => $value
+                ]);
                 return $value;
             }
         }
 
         // Default for unknown activities
+        Log::debug('Using default MET for activity', ['activity' => $activity]);
         return 5.0;
     }
 
-    /**
-     * Suggest training plan
-     */
+
     public function suggestTrainingPlan(string $userId, string $goal, int $daysPerWeek): array
     {
         $plans = [
@@ -253,10 +363,15 @@ class TrainingService implements TrainingServiceInterface
                 6 => $this->get6DayWeightLossPlan(),
             ],
             'build_muscle' => [
-                3 => $this->get3DayMuscleBuildingPlan(),
+                // 3 => $this->get3DayMuscleBuildingPlan(),
                 4 => $this->get4DayMuscleBuildingPlan(),
-                5 => $this->get5DayMuscleBuildingPlan(),
+                // 5 => $this->get5DayMuscleBuildingPlan(),
                 6 => $this->get6DayMuscleBuildingPlan(),
+            ],
+            'gain_weight' => [
+                3 => $this->get3DayWeightGainPlan(),
+                4 => $this->get4DayWeightGainPlan(),
+                5 => $this->get5DayWeightGainPlan(),
             ],
             'maintain' => [
                 3 => $this->get3DayMaintenancePlan(),
@@ -267,15 +382,20 @@ class TrainingService implements TrainingServiceInterface
 
         $plan = $plans[$goal][$daysPerWeek] ?? $plans['maintain'][3];
 
-        // Personalize based on user history
         $plan = $this->personalizePlan($plan, $userId);
 
         return $plan;
     }
 
-    /**
-     * Helper Methods
-     */
+
+    public function suggestTrainingPlanArabic(string $userId, string $goal, int $daysPerWeek): array
+    {
+        $englishPlan = $this->suggestTrainingPlan($userId, $goal, $daysPerWeek);
+
+        return $this->translatePlanToArabic($englishPlan);
+    }
+
+
     private function classifyActivity(string $activityName): string
     {
         $activityLower = strtolower($activityName);
@@ -376,7 +496,6 @@ class TrainingService implements TrainingServiceInterface
             'Focus on consistency over perfection'
         ];
 
-        // Add personalized tips based on history
         if (count($trainingHistory) < 5) {
             array_unshift($tips, 'Start with 2-3 sessions per week and build gradually');
         }
@@ -388,7 +507,6 @@ class TrainingService implements TrainingServiceInterface
     {
         $user = $this->userRepository->find($userId);
 
-        // Adjust based on user profile
         if ($user->gender === 'female') {
             $plan['notes'][] = 'Women may benefit from slightly higher rep ranges (12-15)';
         }
@@ -398,35 +516,5 @@ class TrainingService implements TrainingServiceInterface
         }
 
         return $plan;
-    }
-
-    // Training plan templates
-    private function get3DayWeightLossPlan(): array
-    {
-        return [
-            'monday' => ['focus' => 'Full Body Strength + Cardio', 'exercises' => ['Squats', 'Push-ups', 'Rows', '30min Cardio']],
-            'wednesday' => ['focus' => 'HIIT Cardio', 'exercises' => ['Interval Training', 'Bodyweight Circuits']],
-            'friday' => ['focus' => 'Full Body Strength + Cardio', 'exercises' => ['Deadlifts', 'Overhead Press', 'Pull-ups', '30min Cardio']],
-            'weekend' => ['focus' => 'Active Recovery', 'exercises' => ['Walking', 'Stretching']]
-        ];
-    }
-
-    private function get4DayMuscleBuildingPlan(): array
-    {
-        return [
-            'monday' => ['focus' => 'Chest & Triceps', 'exercises' => ['Bench Press', 'Incline Press', 'Chest Flyes', 'Tricep Extensions']],
-            'tuesday' => ['focus' => 'Back & Biceps', 'exercises' => ['Pull-ups', 'Rows', 'Lat Pulldowns', 'Bicep Curls']],
-            'thursday' => ['focus' => 'Legs', 'exercises' => ['Squats', 'Lunges', 'Leg Press', 'Calf Raises']],
-            'friday' => ['focus' => 'Shoulders & Arms', 'exercises' => ['Overhead Press', 'Lateral Raises', 'Arm Supersets']]
-        ];
-    }
-
-    private function get3DayMaintenancePlan(): array
-    {
-        return [
-            'monday' => ['focus' => 'Full Body A', 'exercises' => ['Squats', 'Bench Press', 'Rows', 'Planks']],
-            'wednesday' => ['focus' => 'Cardio & Core', 'exercises' => ['30min Cardio', 'Core Circuit']],
-            'friday' => ['focus' => 'Full Body B', 'exercises' => ['Deadlifts', 'Overhead Press', 'Pull-ups', 'Lunges']]
-        ];
     }
 }

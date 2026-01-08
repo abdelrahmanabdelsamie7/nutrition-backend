@@ -37,7 +37,7 @@ class FoodLogResource extends JsonResource
             }),
         ];
     }
-    private function getTranslatedEnum(string $type, ?string $value): ?string
+    private function getTranslateEnum(string $type, ?string $value): ?string
     {
         if (is_null($value)) {
             return null;

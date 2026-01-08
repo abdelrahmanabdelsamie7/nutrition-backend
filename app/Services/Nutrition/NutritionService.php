@@ -2,42 +2,79 @@
 
 namespace App\Services\Nutrition;
 
-use App\Interfaces\Services\NutritionServiceInterface;
-use App\Interfaces\Repositories\FoodLogRepositoryInterface;
-use App\Interfaces\Repositories\NutritionCacheRepositoryInterface;
-use App\Services\External\CalorieNinjasService;
 use App\DTOs\NutritionDataDTO;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use App\Services\Voice\VoiceService;
+use App\Services\External\CalorieNinjasService;
+use App\Interfaces\Services\NutritionServiceInterface;
+use App\Services\Translation\ArabicTranslationService;
+use App\Interfaces\Repositories\FoodLogRepositoryInterface;
 
 class NutritionService implements NutritionServiceInterface
 {
     public function __construct(
         private FoodLogRepositoryInterface $foodLogRepository,
-        private NutritionCacheRepositoryInterface $cacheRepository,
         private CalorieNinjasService $calorieService,
+        private ArabicTranslationService $translationService,
         private VoiceService $voiceService
     ) {}
 
-    /**
-     * Process text input and get nutrition data
-     */
+
     public function processTextInput(string $text, string $userId): NutritionDataDTO
     {
-        Log::info('Processing text input', ['user_id' => $userId, 'text' => $text]);
+        $isArabic = $this->translationService->containsArabic($text);
 
-        // Parse food items from text
-        $parsedItems = $this->parseFoodItems($text);
+        if ($isArabic) {
+            $textForTranslation = preg_replace('/\d+/u', '', $text); // إزالة الأرقام
+            $textForTranslation = preg_replace('/\s+/u', ' ', $textForTranslation); // إزالة مسافات زائدة
+            $textForTranslation = trim($textForTranslation);
 
-        // Get nutrition data
-        $nutritionData = $this->getNutritionFromExternalAPI($text);
+            if (!empty($textForTranslation)) {
+                $translatedFood = $this->translationService->translateFoodText($textForTranslation);
 
-        // Create DTO
+                preg_match('/(\d+(?:\.\d+)?)/', $text, $matches);
+                $quantity = $matches[1] ?? 1;
+
+                $text = $quantity . ' ' . $translatedFood;
+            }
+        }
+
+        $originalText = $text;
+
+        $quantityData = $isArabic ?
+            $this->translationService->extractQuantity($text) :
+            ['quantity' => 1, 'unit' => ''];
+
+        if ($isArabic) {
+            $textForTranslation = preg_replace('/\d+\s*\p{L}*/u', '', $originalText);
+            $textForTranslation = trim($textForTranslation);
+
+            if (!empty($textForTranslation)) {
+                $translatedFood = $this->translationService->translateFoodText($textForTranslation);
+                $text = $quantityData['quantity'] . ' ' . $translatedFood;
+            }
+        }
+
+        $nutritionData = $this->calorieService->getNutritionData($text);
+
+        if ($quantityData['quantity'] != 1) {
+            $multiplier = $quantityData['quantity'];
+            $nutritionData['calories'] *= $multiplier;
+            $nutritionData['protein'] *= $multiplier;
+            $nutritionData['carbs'] *= $multiplier;
+            $nutritionData['fat'] *= $multiplier;
+            $nutritionData['quantity_multiplier'] = $multiplier;
+        }
+
+        $nutritionData['original_language'] = $isArabic ? 'ar' : 'en';
+        $nutritionData['original_query'] = $originalText;
+        $nutritionData['processed_query'] = $text;
+
         $dto = new NutritionDataDTO(
             userId: $userId,
-            rawInput: $text,
-            parsedItems: $parsedItems,
+            rawInput: $originalText,
+            parsedItems: $this->parseFoodItems($text),
             calories: $nutritionData['calories'],
             protein: $nutritionData['protein'],
             carbs: $nutritionData['carbs'],
@@ -49,38 +86,23 @@ class NutritionService implements NutritionServiceInterface
             loggedAt: now()->toDateTimeString()
         );
 
-        // Store in repository
         $this->foodLogRepository->create($dto->toArray());
-
-        Log::info('Text input processed successfully', [
-            'user_id' => $userId,
-            'calories' => $dto->calories,
-            'protein' => $dto->protein,
-        ]);
 
         return $dto;
     }
 
-    /**
-     * Process voice input and get nutrition data
-     */
     public function processVoiceInput(UploadedFile $audioFile, string $userId): NutritionDataDTO
     {
         Log::info('Processing voice input', ['user_id' => $userId, 'size' => $audioFile->getSize()]);
 
-        // Transcribe audio to text
         $transcript = $this->voiceService->transcribeAudio($audioFile);
 
-        // Clean transcript
         $cleanTranscript = $this->voiceService->cleanTranscript($transcript);
 
-        // Extract food items
         $foodItems = $this->voiceService->extractFoodItemsFromVoice($cleanTranscript);
 
-        // Process as text input
         $dto = $this->processTextInput($cleanTranscript, $userId);
 
-        // Update source to voice
         $dto->source = 'voice';
 
         Log::info('Voice input processed successfully', [
@@ -92,75 +114,60 @@ class NutritionService implements NutritionServiceInterface
         return $dto;
     }
 
-    /**
-     * Get nutrition data from external API
-     */
-    public function getNutritionFromExternalAPI(string $foodQuery): array
-    {
-        return $this->calorieService->getNutritionData($foodQuery);
-    }
+    // public function getNutritionFromExternalAPI(string $foodQuery): array
+    // {
+    //     return $this->calorieService->getNutritionData($foodQuery);
+    // }
 
-    /**
-     * Parse food items from text
-     */
     public function parseFoodItems(string $text): array
     {
         $items = [];
 
-        // Split by common separators
         $segments = preg_split('/\s*(?:,|and|with|\+)\s*/i', $text);
 
         foreach ($segments as $segment) {
             $segment = trim($segment);
-            // if (!empty($segment)) {
-            //     $items[] = $this->calorieService->parseFoodItem($segment);
-            // }
+            if (!empty($segment)) {
+                $items[] = $this->calorieService->parseFoodItems($segment);
+            }
         }
 
         return $items;
     }
 
-    /**
-     * Calculate nutrition totals
-     */
-    public function calculateTotals(array $foodItems): array
-    {
-        $totals = [
-            'calories' => 0,
-            'protein' => 0,
-            'carbs' => 0,
-            'fat' => 0,
-            'items' => [],
-        ];
+    // public function calculateTotals(array $foodItems): array
+    // {
+    //     $totals = [
+    //         'calories' => 0,
+    //         'protein' => 0,
+    //         'carbs' => 0,
+    //         'fat' => 0,
+    //         'items' => [],
+    //     ];
 
-        foreach ($foodItems as $item) {
-            $nutrition = $this->calorieService->getNutritionData($item['item']);
+    //     foreach ($foodItems as $item) {
+    //         $nutrition = $this->calorieService->getNutritionData($item['item']);
 
-            // Adjust for quantity
-            $quantity = $item['quantity'] ?? 1;
-            $nutrition['calories'] *= $quantity;
-            $nutrition['protein'] *= $quantity;
-            $nutrition['carbs'] *= $quantity;
-            $nutrition['fat'] *= $quantity;
+    //         $quantity = $item['quantity'] ?? 1;
+    //         $nutrition['calories'] *= $quantity;
+    //         $nutrition['protein'] *= $quantity;
+    //         $nutrition['carbs'] *= $quantity;
+    //         $nutrition['fat'] *= $quantity;
 
-            // Add to totals
-            $totals['calories'] += $nutrition['calories'];
-            $totals['protein'] += $nutrition['protein'];
-            $totals['carbs'] += $nutrition['carbs'];
-            $totals['fat'] += $nutrition['fat'];
+    //         $totals['calories'] += $nutrition['calories'];
+    //         $totals['protein'] += $nutrition['protein'];
+    //         $totals['carbs'] += $nutrition['carbs'];
+    //         $totals['fat'] += $nutrition['fat'];
 
-            $totals['items'][] = [
-                'item' => $item,
-                'nutrition' => $nutrition,
-            ];
-        }
+    //         $totals['items'][] = [
+    //             'item' => $item,
+    //             'nutrition' => $nutrition,
+    //         ];
+    //     }
 
-        return $totals;
-    }
+    //     return $totals;
+    // }
 
-    /**
-     * Get daily nutrition summary
-     */
     public function getDailySummary(string $userId, string $date): array
     {
         $summary = $this->foodLogRepository->getDailySummary(
@@ -168,7 +175,6 @@ class NutritionService implements NutritionServiceInterface
             \Carbon\Carbon::parse($date)
         );
 
-        // Get user targets for comparison
         $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
         $user = $userRepository->find($userId);
 
@@ -179,7 +185,6 @@ class NutritionService implements NutritionServiceInterface
             'fat' => $user->daily_fat_target ?? 67,
         ];
 
-        // Calculate percentages
         $percentages = [];
         foreach ($targets as $key => $target) {
             $consumed = $summary['total_' . $key] ?? 0;
@@ -201,9 +206,6 @@ class NutritionService implements NutritionServiceInterface
         ];
     }
 
-    /**
-     * Get weekly nutrition summary
-     */
     public function getWeeklySummary(string $userId, string $startDate, string $endDate): array
     {
         $summary = $this->foodLogRepository->getWeeklySummary(
@@ -212,7 +214,6 @@ class NutritionService implements NutritionServiceInterface
             \Carbon\Carbon::parse($endDate)
         );
 
-        // Get user targets
         $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
         $user = $userRepository->find($userId);
 
@@ -228,7 +229,6 @@ class NutritionService implements NutritionServiceInterface
             $weeklyTargets[$key] = $value * 7;
         }
 
-        // Calculate adherence
         $adherence = $this->calculateWeeklyAdherence($summary, $weeklyTargets);
 
         return [
@@ -243,48 +243,41 @@ class NutritionService implements NutritionServiceInterface
         ];
     }
 
-    /**
-     * Compare intake vs targets
-     */
-    public function compareWithTargets(string $userId, array $intake): array
-    {
-        $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
-        $user = $userRepository->find($userId);
+    // public function compareWithTargets(string $userId, array $intake): array
+    // {
+    //     $userRepository = app(\App\Interfaces\Repositories\UserRepositoryInterface::class);
+    //     $user = $userRepository->find($userId);
 
-        $targets = [
-            'calories' => $user->daily_calorie_target ?? 2000,
-            'protein' => $user->daily_protein_target ?? 150,
-            'carbs' => $user->daily_carbs_target ?? 250,
-            'fat' => $user->daily_fat_target ?? 67,
-        ];
+    //     $targets = [
+    //         'calories' => $user->daily_calorie_target ?? 2000,
+    //         'protein' => $user->daily_protein_target ?? 150,
+    //         'carbs' => $user->daily_carbs_target ?? 250,
+    //         'fat' => $user->daily_fat_target ?? 67,
+    //     ];
 
-        $comparison = [];
-        foreach ($targets as $key => $target) {
-            $actual = $intake[$key] ?? 0;
-            $difference = $actual - $target;
-            $percentage = $target > 0 ? ($actual / $target) * 100 : 0;
+    //     $comparison = [];
+    //     foreach ($targets as $key => $target) {
+    //         $actual = $intake[$key] ?? 0;
+    //         $difference = $actual - $target;
+    //         $percentage = $target > 0 ? ($actual / $target) * 100 : 0;
 
-            $comparison[$key] = [
-                'actual' => $actual,
-                'target' => $target,
-                'difference' => $difference,
-                'percentage' => $percentage,
-                'status' => $this->getStatus($difference, $key),
-            ];
-        }
+    //         $comparison[$key] = [
+    //             'actual' => $actual,
+    //             'target' => $target,
+    //             'difference' => $difference,
+    //             'percentage' => $percentage,
+    //             'status' => $this->getStatus($difference, $key),
+    //         ];
+    //     }
 
-        return $comparison;
-    }
+    //     return $comparison;
+    // }
 
-    /**
-     * Helper Methods
-     */
     private function isOnTrack(array $summary, array $targets): bool
     {
         $calories = $summary['total_calories'] ?? 0;
         $targetCalories = $targets['calories'] ?? 2000;
 
-        // Within ±10% of target
         $lowerBound = $targetCalories * 0.9;
         $upperBound = $targetCalories * 1.1;
 
@@ -302,7 +295,6 @@ class NutritionService implements NutritionServiceInterface
 
         $adherence = ($totalCalories / $targetCalories) * 100;
 
-        // Cap at 100% for visualization
         return min($adherence, 100);
     }
 
@@ -316,7 +308,6 @@ class NutritionService implements NutritionServiceInterface
 
         $calories = array_column($dailyData, 'daily_calories');
 
-        // Calculate trend (simple linear regression)
         $n = count($calories);
         $sumX = $sumY = $sumXY = $sumX2 = 0;
 
@@ -329,7 +320,6 @@ class NutritionService implements NutritionServiceInterface
 
         $slope = ($n * $sumXY - $sumX * $sumY) / ($n * $sumX2 - $sumX * $sumX);
 
-        // Calculate volatility (standard deviation)
         $mean = array_sum($calories) / $n;
         $variance = 0;
         foreach ($calories as $value) {
