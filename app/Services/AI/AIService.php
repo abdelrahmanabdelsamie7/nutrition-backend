@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services;
+namespace App\Services\AI;
 
 use App\Services\External\GeminiAIService;
 use Illuminate\Support\Facades\{Cache};
@@ -45,20 +45,19 @@ class AIService
 
                         return $recommendations;
                     }
-
                 } catch (\Exception $e) {
                     $lastError = $e;
 
 
                     if ($attempt < $maxRetries) {
-                        sleep(1); 
+                        sleep(1);
                     }
                 }
             }
 
             return $this->getFallbackRecommendations($user, $language);
         } catch (\Exception $e) {
- 
+
             return $this->getFallbackRecommendations($user, $language);
         }
     }
@@ -81,7 +80,7 @@ class AIService
                 $budgetConstraints,
                 $language
             );
-            
+
             $suggestions['user_id'] = $user->id;
             $suggestions['generated_at'] = now()->toISOString();
 
@@ -112,11 +111,11 @@ class AIService
             'language' => $user->language ?? 'arabic',
         ];
     }
-    
+
     private function calculateAdherenceScore(array $recommendations, array $nutritionSummary, array $userData): float
     {
-        $score = 70.0; 
-        
+        $score = 70.0;
+
         if (!empty($nutritionSummary['consistency_score'])) {
             $score += $nutritionSummary['consistency_score'] * 0.3;
         }
