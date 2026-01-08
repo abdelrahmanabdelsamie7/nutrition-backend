@@ -65,6 +65,11 @@ class AIRecommendationRepository extends BaseRepository implements AIRecommendat
             ->exists();
     }
 
+    public function createRecommendation(array $data): AIRecommendation
+    {
+        return $this->model->create($data);
+    }
+
     public function markAsViewed(int $recommendationId): bool
     {
         $recommendation = $this->findOrFail($recommendationId);

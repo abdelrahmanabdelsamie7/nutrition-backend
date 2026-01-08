@@ -3,8 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\BaseController;
-use App\Http\Requests\Auth\LoginRequest;
-use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Requests\Auth\{LoginRequest, RegisterRequest};
 use App\Http\Resources\UserResource;
 use App\Interfaces\Repositories\UserRepositoryInterface;
 use Illuminate\Http\JsonResponse;
@@ -49,7 +48,7 @@ class AuthController extends BaseController
                 'user' => new UserResource($user),
                 'access_token' => $token,
                 'token_type' => 'bearer',
-                'expires_in' => config('jwt.ttl') * 60
+                'expires_in' => config('jwt.ttl') * 60 * 60 * 60
             ], 'User registered successfully');
         } catch (\Exception $e) {
             return $this->errorResponse('Registration failed: ' . $e->getMessage(), 500);
@@ -67,7 +66,7 @@ class AuthController extends BaseController
             'user' => new UserResource($user),
             'access_token' => $token,
             'token_type' => 'bearer',
-            'expires_in' => config('jwt.ttl') * 60
+            'expires_in' => config('jwt.ttl') * 60 * 60 * 60
         ], 'Login successful');
     }
 
@@ -88,7 +87,7 @@ class AuthController extends BaseController
         return $this->successResponse([
             'access_token' => Auth::guard('api')->refresh(),
             'token_type' => 'bearer',
-            'expires_in' => config('jwt.ttl') * 60
+            'expires_in' => config('jwt.ttl') * 60 * 60 * 60
         ], 'Token refreshed');
     }
 }

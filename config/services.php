@@ -21,9 +21,10 @@ return [
 
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL', 'gemini-1.0-pro'),
+        'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/'),
         'project_id' => env('GEMINI_PROJECT_ID'),
         'location' => env('GEMINI_LOCATION', 'us-central1'),
-        'model_id' => env('GEMINI_MODEL_ID', 'gemini-2.0-flash-exp'),
     ],
 
     'openai' => [

@@ -56,17 +56,11 @@ class AIRecommendation extends Model
         'viewed_at' => 'datetime',
     ];
 
-    /**
-     * Relationships
-     */
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
-
-    /**
-     * Scopes
-     */
+ 
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
@@ -83,9 +77,6 @@ class AIRecommendation extends Model
         return $query->orderBy('created_at', 'desc');
     }
 
-    /**
-     * ACCESSORS - تحويل التاريخ لـ Carbon object تلقائياً
-     */
     public function getPeriodStartAttribute($value): Carbon
     {
         return Carbon::parse($value);
@@ -96,9 +87,6 @@ class AIRecommendation extends Model
         return Carbon::parse($value);
     }
 
-    /**
-     * MUTATORS - تأكد من حفظ التاريخ كـ Y-m-d
-     */
     public function setPeriodStartAttribute($value): void
     {
         $this->attributes['period_start'] = $this->parseDate($value);
@@ -109,9 +97,6 @@ class AIRecommendation extends Model
         $this->attributes['period_end'] = $this->parseDate($value);
     }
 
-    /**
-     * Helper Methods
-     */
     public function markAsViewed(): void
     {
         if (!$this->viewed_at) {
@@ -130,7 +115,7 @@ class AIRecommendation extends Model
 
     public function getPeriodLabel(): string
     {
-        $start = $this->period_start; // Now returns Carbon object
+        $start = $this->period_start; 
 
         if ($this->period_type === 'daily') {
             return $start->format('F j, Y');
@@ -162,9 +147,6 @@ class AIRecommendation extends Model
         ];
     }
 
-    /**
-     * Parse date from various formats
-     */
     private function parseDate($value): string
     {
         if ($value instanceof Carbon) {

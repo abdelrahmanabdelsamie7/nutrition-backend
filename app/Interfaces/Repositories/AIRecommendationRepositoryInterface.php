@@ -19,4 +19,5 @@ interface AIRecommendationRepositoryInterface extends BaseRepositoryInterface
     public function getMostHelpfulRecommendations(string $userId, int $limit = 5): Collection;
     public function deactivateOldRecommendations(string $userId): int;
     public function getAIUsageStats(string $userId): array;
+    
 }

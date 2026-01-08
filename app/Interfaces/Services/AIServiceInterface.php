@@ -6,7 +6,18 @@ use App\Models\User;
 
 interface AIServiceInterface
 {
-    public function generateNutritionRecommendations(User $user, array $nutritionSummary, array $trainingSummary);
+    public function generateNutritionRecommendations(
+        User $user,
+        array $nutritionSummary,
+        array $trainingSummary,
+        string $language = 'arabic'
+    ): array;
+
+    public function generateMealSuggestions(
+        array $userData,
+        array $budgetConstraints,
+        string $language = 'arabic'
+    ): array;
     // public function generateMealSuggestions(User $user, array $nutritionData, array $budgetConstraints): array;
     public function generateTrainingRecommendations(User $user, array $trainingHistory): array;
     public function getAIResponse(string $prompt, array $parameters = []): string;

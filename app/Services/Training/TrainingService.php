@@ -2,7 +2,6 @@
 
 namespace App\Services\Training;
 
-use Illuminate\Support\Facades\Log;
 use App\Traits\TrainingPlanTemplatesTrait;
 use App\Interfaces\Services\TrainingServiceInterface;
 use App\Interfaces\Repositories\UserRepositoryInterface;
@@ -68,7 +67,6 @@ class TrainingService implements TrainingServiceInterface
         ];
     }
 
-
     private function getUserWeightWithFallback($user): float
     {
         if (isset($user->weight) && is_numeric($user->weight) && $user->weight > 0) {
@@ -105,7 +103,6 @@ class TrainingService implements TrainingServiceInterface
         return round(max($calories, 0), 1);
     }
 
-
     public function getTrainingRecommendations(string $userId, array $goals): array
     {
         $user = $this->userRepository->find($userId);
@@ -137,7 +134,6 @@ class TrainingService implements TrainingServiceInterface
 
         return $recommendations;
     }
-
 
     private function getWeightGainRecommendations($user, $trainingHistory): array
     {
@@ -230,7 +226,6 @@ class TrainingService implements TrainingServiceInterface
         return $recommendations;
     }
 
-
     public function calculateTrainingVolume(array $sessions): array
     {
         $volume = [
@@ -300,7 +295,6 @@ class TrainingService implements TrainingServiceInterface
         $activity = $this->translateActivityToEnglish($activity);
 
         $metValues = [
-            // Cardio
             'running' => 9.8,
             'jogging' => 7.0,
             'walking' => 3.5,
@@ -310,7 +304,6 @@ class TrainingService implements TrainingServiceInterface
             'jump rope' => 10.0,
             'brisk walking' => 5.0,
 
-            // Strength
             'weight lifting' => 6.0,
             'bodyweight exercises' => 5.0,
             'calisthenics' => 5.5,
@@ -319,13 +312,11 @@ class TrainingService implements TrainingServiceInterface
             'pull ups' => 4.5,
             'squats' => 5.0,
 
-            // Sports
             'basketball' => 8.0,
             'soccer' => 8.0,
             'tennis' => 8.0,
             'volleyball' => 4.0,
 
-            // Other
             'yoga' => 3.0,
             'pilates' => 3.5,
             'stretching' => 2.5,
@@ -339,19 +330,12 @@ class TrainingService implements TrainingServiceInterface
 
         foreach ($metValues as $key => $value) {
             if (str_contains($activityLower, $key)) {
-                Log::debug('Found MET value for activity', [
-                    'activity' => $activity,
-                    'met' => $value
-                ]);
                 return $value;
             }
         }
 
-        // Default for unknown activities
-        Log::debug('Using default MET for activity', ['activity' => $activity]);
         return 5.0;
     }
-
 
     public function suggestTrainingPlan(string $userId, string $goal, int $daysPerWeek): array
     {
@@ -387,14 +371,12 @@ class TrainingService implements TrainingServiceInterface
         return $plan;
     }
 
-
     public function suggestTrainingPlanArabic(string $userId, string $goal, int $daysPerWeek): array
     {
         $englishPlan = $this->suggestTrainingPlan($userId, $goal, $daysPerWeek);
 
         return $this->translatePlanToArabic($englishPlan);
     }
-
 
     private function classifyActivity(string $activityName): string
     {
