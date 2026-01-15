@@ -6,7 +6,7 @@ use Illuminate\Http\UploadedFile;
 
 interface VoiceServiceInterface
 {
-    public function transcribeAudio(UploadedFile $audioFile): string;
+    // public function transcribeAudio(UploadedFile $audioFile): string;
     public function cleanTranscript(string $transcript): string;
     public function extractFoodItemsFromVoice(string $transcript): array;
     public function validateAudioFile(UploadedFile $audioFile): bool;

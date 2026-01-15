@@ -3,7 +3,7 @@
 namespace App\Services\Voice;
 
 use App\Interfaces\Services\VoiceServiceInterface;
-use App\Services\External\OpenAIService;
+
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -12,59 +12,58 @@ use FFMpeg\Format\Audio\Mp3;
 
 class VoiceService implements VoiceServiceInterface
 {
-    private OpenAIService $openAIService;
     private array $supportedFormats = ['mp3', 'wav', 'm4a', 'ogg'];
     private int $maxFileSize = 10485760; // 10MB
     private int $maxDuration = 300; // 5 minutes
 
-    public function __construct(OpenAIService $openAIService)
-    {
-        $this->openAIService = $openAIService;
-    }
+    // public function __construct(OpenAIService $openAIService)
+    // {
+    //     $this->openAIService = $openAIService;
+    // }
 
     /**
      * Transcribe audio file to text
      */
-    public function transcribeAudio(UploadedFile $audioFile): string
-    {
-        $this->validateAudioFile($audioFile);
+    // public function transcribeAudio(UploadedFile $audioFile): string
+    // {
+    //     $this->validateAudioFile($audioFile);
 
-        Log::info('Starting audio transcription', [
-            'filename' => $audioFile->getClientOriginalName(),
-            'size' => $audioFile->getSize(),
-            'mime_type' => $audioFile->getMimeType()
-        ]);
+    //     Log::info('Starting audio transcription', [
+    //         'filename' => $audioFile->getClientOriginalName(),
+    //         'size' => $audioFile->getSize(),
+    //         'mime_type' => $audioFile->getMimeType()
+    //     ]);
 
-        try {
-            // Convert to MP3 if needed
-            $convertedPath = $this->convertAudioFormat($audioFile, 'mp3');
+    //     try {
+    //         // Convert to MP3 if needed
+    //         $convertedPath = $this->convertAudioFormat($audioFile, 'mp3');
 
-            // Transcribe using OpenAI Whisper
-            $transcript = $this->openAIService->transcribeAudio($convertedPath);
+    //         // Transcribe using OpenAI Whisper
+    //         // $transcript = $this->openAIService->transcribeAudio($convertedPath);
 
-            // Clean up temporary file
-            if ($convertedPath !== $audioFile->getRealPath()) {
-                unlink($convertedPath);
-            }
+    //         // Clean up temporary file
+    //         if ($convertedPath !== $audioFile->getRealPath()) {
+    //             unlink($convertedPath);
+    //         }
 
-            // Clean and normalize transcript
-            $cleanTranscript = $this->cleanTranscript($transcript);
+    //         // Clean and normalize transcript
+    //         // $cleanTranscript = $this->cleanTranscript($transcript);
 
-            Log::info('Audio transcription completed', [
-                'original_length' => strlen($transcript),
-                'cleaned_length' => strlen($cleanTranscript)
-            ]);
+    //         Log::info('Audio transcription completed', [
+    //             'original_length' => strlen($transcript),
+    //             'cleaned_length' => strlen($cleanTranscript)
+    //         ]);
 
-            return $cleanTranscript;
-        } catch (\Exception $e) {
-            Log::error('Audio transcription failed', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
+    //         return $cleanTranscript;
+    //     } catch (\Exception $e) {
+    //         Log::error('Audio transcription failed', [
+    //             'error' => $e->getMessage(),
+    //             'trace' => $e->getTraceAsString()
+    //         ]);
 
-            throw new \Exception("Voice processing failed: " . $e->getMessage());
-        }
-    }
+    //         throw new \Exception("Voice processing failed: " . $e->getMessage());
+    //     }
+    // }
 
     /**
      * Clean and normalize transcript
